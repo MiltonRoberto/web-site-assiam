@@ -54,7 +54,7 @@ const fallbackLogoSource = "/logo-aasiam.svg";
 export default function App() {
   const [customer, setCustomer] = useState(initialCustomer);
   const [selection, setSelection] = useState(() => createEmptySelection());
-  const [step, setStep] = useState("shop");
+  const [step, setStep] = useState("dados");
   const [cartOpen, setCartOpen] = useState(false);
   const [customerSubmitted, setCustomerSubmitted] = useState(false);
   const [lastResult, setLastResult] = useState(null);
@@ -95,7 +95,7 @@ export default function App() {
     e.preventDefault();
     setCustomerSubmitted(true);
     if (!customerValidation.valid) return;
-    goToStep("conferencia");
+    goToStep("shop");
   }
 
   function goToStep(next) {
@@ -108,7 +108,7 @@ export default function App() {
     setSelection(createEmptySelection());
     setCustomerSubmitted(false);
     setLastResult(null);
-    goToStep("shop");
+    goToStep("dados");
   }
 
   return (
@@ -130,7 +130,7 @@ export default function App() {
           onSizedVariantChange={updateSizedVariant}
           onModelQuantityChange={updateModelQuantity}
           onBundleOptionChange={updateBundleOption}
-          onCheckout={() => goToStep("dados")}
+          onCheckout={() => goToStep("conferencia")}
           cartOpen={cartOpen}
           onCartClose={() => setCartOpen(false)}
         />
@@ -143,7 +143,6 @@ export default function App() {
           submitted={customerSubmitted}
           onChange={(f, v) => setCustomer((c) => ({ ...c, [f]: v }))}
           onSubmit={submitCustomer}
-          onBack={() => goToStep("shop")}
         />
       )}
 
@@ -686,14 +685,10 @@ function QuantityStepper({ value, onChange, label, compact = true }) {
 }
 
 /* ─── CUSTOMER STEP ─── */
-function CustomerStep({ customer, validation, submitted, onChange, onSubmit, onBack }) {
+function CustomerStep({ customer, validation, submitted, onChange, onSubmit }) {
   return (
     <main className="step-page">
       <div className="step-page-inner">
-        <button type="button" className="ghost-button back-btn" onClick={onBack}>
-          <ArrowLeft size={16} /> Voltar aos produtos
-        </button>
-
         <div className="step-card">
           <div className="section-title">
             <User size={22} />
