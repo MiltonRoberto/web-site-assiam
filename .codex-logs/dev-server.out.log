@@ -128,3 +128,26 @@
 [dev:web] [2m23:35:59[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles.css[22m
 [dev:web] [2m23:37:09[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles.css[22m
 [dev:web] [2m23:37:14[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles.css[22m
+[dev:web] [2m23:42:08[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2mfrontend/index.html[22m
+[dev:web] [2m23:42:14[22m [36m[1m[vite][22m[39m [32mvite.config.js changed, restarting server...[39m
+[dev:web] [2m23:42:15[22m [36m[1m[vite][22m[39m server restarted.
+[dev:api] Restarting 'server/index.js'
+[dev:api] node:internal/modules/cjs/loader:1424
+[dev:api]   throw err;
+[dev:api]   ^
+[dev:api] 
+[dev:api] Error: Cannot find module 'C:\Users\Microsoft User\Desktop\EcomerceAtletica\server\index.js'
+[dev:api]     at Module._resolveFilename (node:internal/modules/cjs/loader:1421:15)
+[dev:api]     at defaultResolveImpl (node:internal/modules/cjs/loader:1059:19)
+[dev:api]     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1064:22)
+[dev:api]     at Module._load (node:internal/modules/cjs/loader:1227:37)
+[dev:api]     at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+[dev:api]     at wrapModuleLoad (node:internal/modules/cjs/loader:245:24)
+[dev:api]     at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+[dev:api]     at node:internal/main/run_main_module:33:47 {
+[dev:api]   code: 'MODULE_NOT_FOUND',
+[dev:api]   requireStack: []
+[dev:api] }
+[dev:api] 
+[dev:api] Node.js v24.12.0
+[dev:api] Failed running 'server/index.js'. Waiting for file changes before restarting...

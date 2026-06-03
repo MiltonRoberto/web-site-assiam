@@ -60,13 +60,7 @@ app.post("/api/payments", async (req, res) => {
       ? await createMercadoPagoPayment(paymentRequest, orderId)
       : createSimulatedPayment(paymentRequest, orderId);
 
-    const sheetResult = await appendOrderToSheet({
-      eventType: "pedido_criado",
-      orderId,
-      customer,
-      order,
-      payment
-    });
+    const sheetResult = await appendOrderToSheet({ orderId, customer, order, payment });
 
     res.status(201).json({
       orderId,
@@ -98,14 +92,10 @@ app.post("/api/webhooks/mercado-pago", async (req, res) => {
     const payment = await getMercadoPagoPayment(paymentId);
 
     await appendOrderToSheet({
-      eventType: "status_pagamento",
       orderId: payment.external_reference || "",
       customer: {
         name: payment.metadata?.customer_name || "",
-        phone: payment.metadata?.customer_phone || "",
-        email: payment.payer?.email || "",
-        course: "",
-        notes: ""
+        phone: payment.metadata?.customer_phone || ""
       },
       order: {
         lines: [],
@@ -260,45 +250,92 @@ function createSimulatedPayment(paymentRequest, orderId) {
   };
 }
 
-async function appendOrderToSheet({ eventType, orderId, customer, order, payment }) {
+async function appendOrderToSheet({ orderId, customer, order, payment }) {
   if (!isGoogleSheetsConfigured()) {
     return { enabled: false, status: "not_configured" };
   }
 
   const auth = createGoogleAuth();
   const sheets = google.sheets({ version: "v4", auth });
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
   const sheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || "Pedidos";
 
-  const values = [
-    [
-      new Date().toISOString(),
-      eventType,
-      orderId,
-      customer.name,
-      customer.phone,
-      customer.email,
-      customer.course,
-      customer.delivery,
-      order.totalAmount,
-      order.totalQuantity,
-      order.lines.map(formatLineForSheet).join(" | "),
-      payment.id || "",
-      payment.status || "",
-      payment.status_detail || "",
-      payment.payment_method_id || "",
-      payment.payment_type_id || "",
-      customer.notes
-    ]
+  // Ensure header row exists on first use
+  await ensureSheetHeader(sheets, spreadsheetId, sheetName);
+
+  const paymentMethod = resolvePaymentMethod(payment);
+  const installments = payment.installments > 1 ? `${payment.installments}x` : "À vista";
+  const status = resolvePaymentStatus(payment.status);
+
+  const row = [
+    formatDateTime(),
+    orderId,
+    customer.name,
+    customer.phone,
+    order.lines.map(formatLineForSheet).join("\n"),
+    order.totalAmount,
+    paymentMethod,
+    paymentMethod === "Pix" ? "—" : installments,
+    status,
+    payment.id || ""
   ];
 
   await sheets.spreadsheets.values.append({
-    spreadsheetId: process.env.GOOGLE_SHEETS_SPREADSHEET_ID,
-    range: `${quoteSheetName(sheetName)}!A:Q`,
+    spreadsheetId,
+    range: `${quoteSheetName(sheetName)}!A:J`,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values }
+    requestBody: { values: [row] }
   });
 
   return { enabled: true, status: "appended", sheetName };
+}
+
+async function ensureSheetHeader(sheets, spreadsheetId, sheetName) {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${quoteSheetName(sheetName)}!A1`
+  });
+
+  if (res.data.values?.length) return;
+
+  const headers = [
+    "Data/Hora", "ID Pedido", "Nome", "Telefone",
+    "Itens", "Valor Total (R$)", "Pagamento", "Parcelas", "Status", "ID Pagamento"
+  ];
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${quoteSheetName(sheetName)}!A1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [headers] }
+  });
+}
+
+function resolvePaymentMethod(payment) {
+  const type = payment.payment_type_id || "";
+  const method = payment.payment_method_id || "";
+  if (type === "bank_transfer" || method === "pix") return "Pix";
+  if (type === "credit_card") return "Cartão de Crédito";
+  if (type === "debit_card") return "Cartão de Débito";
+  if (method === "simulated" || payment.status === "simulated") return "Teste (simulado)";
+  return method || type || "—";
+}
+
+function resolvePaymentStatus(status) {
+  const map = {
+    approved: "Aprovado",
+    pending: "Pendente",
+    in_process: "Em análise",
+    rejected: "Recusado",
+    cancelled: "Cancelado",
+    refunded: "Reembolsado",
+    simulated: "Teste (simulado)"
+  };
+  return map[status] || status || "—";
+}
+
+function formatDateTime() {
+  return new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
 }
 
 function createGoogleAuth() {
