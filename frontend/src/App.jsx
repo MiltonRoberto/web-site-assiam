@@ -50,6 +50,7 @@ const productIcons = {
 const initialCustomer = { name: "", phone: "" };
 const preferredLogoSource = "/logo-aasiam.jpg";
 const fallbackLogoSource = "/logo-aasiam.svg";
+const mercadoPagoPublicKey = import.meta.env.VITE_MP_PUBLIC_KEY;
 
 export default function App() {
   const [customer, setCustomer] = useState(initialCustomer);
@@ -801,7 +802,9 @@ function PaymentStep({ customer, selection, order, onBack, onFinished, onNewOrde
   const [paymentResult, setPaymentResult] = useState(null);
   const [paymentError, setPaymentError] = useState("");
   const [brickReady, setBrickReady] = useState(false);
-  const publicKey = import.meta.env.VITE_MP_PUBLIC_KEY;
+  const publicKey = isMercadoPagoPublicKeyConfigured(mercadoPagoPublicKey)
+    ? mercadoPagoPublicKey
+    : "";
 
   useEffect(() => {
     fetch("/api/config")
@@ -998,4 +1001,14 @@ function getProductQty(product, order) {
   return order.lines
     .filter((l) => l.productId === product.id)
     .reduce((t, l) => t + l.quantity, 0);
+}
+
+function isMercadoPagoPublicKeyConfigured(value) {
+  const key = String(value || "").trim();
+
+  if (!key) {
+    return false;
+  }
+
+  return !key.includes("SEU_PUBLIC_KEY");
 }

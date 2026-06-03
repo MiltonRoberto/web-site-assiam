@@ -13,6 +13,26 @@ const rootDir = path.resolve(__dirname, "..");
 const app = express();
 const port = process.env.PORT || 3333;
 const mercadoPagoAccessToken = process.env.MP_ACCESS_TOKEN;
+const defaultGoogleSheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || "Pedidos";
+
+const SHEET_HEADERS = [
+  "Data/Hora",
+  "Evento",
+  "ID Pedido",
+  "Nome",
+  "Telefone",
+  "Itens",
+  "Tamanho",
+  "Quantidade",
+  "Total",
+  "Pagamento",
+  "Parcelas",
+  "Status",
+  "Detalhe",
+  "Metodo",
+  "Tipo",
+  "Observacoes"
+];
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -28,7 +48,7 @@ app.get("/api/config", (_req, res) => {
   res.json({
     mercadoPagoConfigured: Boolean(mercadoPagoAccessToken),
     googleSheetsConfigured: isGoogleSheetsConfigured(),
-    googleSheetName: process.env.GOOGLE_SHEETS_SHEET_NAME || "Pedidos"
+    googleSheetName: defaultGoogleSheetName
   });
 });
 
@@ -43,9 +63,9 @@ app.post("/api/payments", async (req, res) => {
       return res.status(400).json({ error: "Selecione pelo menos um produto." });
     }
 
-    if (!customer.name || !customer.phone || !customer.email) {
+    if (!customer.name || !customer.phone) {
       return res.status(400).json({
-        error: "Nome, telefone e e-mail sao obrigatorios para finalizar o pedido."
+        error: "Nome e telefone sao obrigatorios para finalizar o pedido."
       });
     }
 
@@ -60,7 +80,13 @@ app.post("/api/payments", async (req, res) => {
       ? await createMercadoPagoPayment(paymentRequest, orderId)
       : createSimulatedPayment(paymentRequest, orderId);
 
-    const sheetResult = await appendOrderToSheet({ orderId, customer, order, payment });
+    const sheetResult = await appendOrderToSheet({
+      event: "Novo pedido",
+      orderId,
+      customer,
+      order,
+      payment
+    });
 
     res.status(201).json({
       orderId,
@@ -92,10 +118,15 @@ app.post("/api/webhooks/mercado-pago", async (req, res) => {
     const payment = await getMercadoPagoPayment(paymentId);
 
     await appendOrderToSheet({
+      event: "Atualizacao webhook",
       orderId: payment.external_reference || "",
       customer: {
         name: payment.metadata?.customer_name || "",
-        phone: payment.metadata?.customer_phone || ""
+        phone: payment.metadata?.customer_phone || "",
+        email: payment.metadata?.customer_email || "",
+        course: payment.metadata?.customer_course || "",
+        delivery: payment.metadata?.customer_delivery || "",
+        notes: payment.metadata?.customer_notes || ""
       },
       order: {
         lines: [],
@@ -150,22 +181,23 @@ function buildMercadoPagoPaymentRequest({ orderId, order, customer, payment }) {
     external_reference: orderId,
     statement_descriptor: "AASIAM",
     payment_method_id: paymentMethodId,
-    metadata: {
-      order_id: orderId,
-      customer_name: customer.name,
-      customer_phone: customer.phone,
-      customer_course: customer.course,
-      customer_delivery: customer.delivery,
-      items: order.lines.map((line) => ({
-        product_id: line.productId,
-        name: line.productName,
+      metadata: {
+        order_id: orderId,
+        customer_name: customer.name,
+        customer_phone: customer.phone,
+        customer_email: customer.email,
+        customer_course: customer.course,
+        customer_delivery: customer.delivery,
+        customer_notes: customer.notes,
+        items: order.lines.map((line) => ({
+          product_id: line.productId,
+          name: line.productName,
         variant: line.variant,
         quantity: line.quantity,
         unit_price: line.unitPriceCents / 100
       }))
     },
     payer: {
-      email: payer.email || customer.email,
       first_name: customer.name.split(" ")[0] || customer.name
     },
     additional_info: {
@@ -181,6 +213,7 @@ function buildMercadoPagoPaymentRequest({ orderId, order, customer, payment }) {
   copyOptional(request, "token", formData.token);
   copyOptional(request, "installments", formData.installments);
   copyOptional(request, "issuer_id", formData.issuer_id);
+  copyOptional(request.payer, "email", payer.email || customer.email);
 
   if (payer.identification?.number) {
     request.payer.identification = {
@@ -250,7 +283,7 @@ function createSimulatedPayment(paymentRequest, orderId) {
   };
 }
 
-async function appendOrderToSheet({ orderId, customer, order, payment }) {
+async function appendOrderToSheet({ event = "Novo pedido", orderId, customer, order, payment }) {
   if (!isGoogleSheetsConfigured()) {
     return { enabled: false, status: "not_configured" };
   }
@@ -258,36 +291,73 @@ async function appendOrderToSheet({ orderId, customer, order, payment }) {
   const auth = createGoogleAuth();
   const sheets = google.sheets({ version: "v4", auth });
   const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
-  const sheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || "Pedidos";
+  const sheetName = defaultGoogleSheetName;
 
-  // Ensure header row exists on first use
+  await ensureSheetExists(sheets, spreadsheetId, sheetName);
   await ensureSheetHeader(sheets, spreadsheetId, sheetName);
 
   const paymentMethod = resolvePaymentMethod(payment);
   const installments = payment.installments > 1 ? `${payment.installments}x` : "À vista";
   const status = resolvePaymentStatus(payment.status);
+  const itemSummary = summarizeOrderLines(order.lines);
 
   const row = [
     formatDateTime(),
+    event,
     orderId,
     customer.name,
     customer.phone,
-    order.lines.map(formatLineForSheet).join("\n"),
+    itemSummary.items,
+    itemSummary.sizes,
+    order.totalQuantity,
     order.totalAmount,
     paymentMethod,
     paymentMethod === "Pix" ? "—" : installments,
     status,
-    payment.id || ""
+    payment.status_detail || "",
+    payment.payment_method_id || "",
+    payment.payment_type_id || "",
+    customer.notes || ""
   ];
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${quoteSheetName(sheetName)}!A:J`,
+    range: `${quoteSheetName(sheetName)}!A:P`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [row] }
   });
 
   return { enabled: true, status: "appended", sheetName };
+}
+
+async function ensureSheetExists(sheets, spreadsheetId, sheetName) {
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets.properties.title"
+  });
+
+  const hasSheet = spreadsheet.data.sheets?.some(
+    (sheet) => sheet.properties?.title === sheetName
+  );
+
+  if (hasSheet) {
+    return;
+  }
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          addSheet: {
+            properties: {
+              title: sheetName
+            }
+          }
+        }
+      ]
+    }
+  });
 }
 
 async function ensureSheetHeader(sheets, spreadsheetId, sheetName) {
@@ -298,16 +368,11 @@ async function ensureSheetHeader(sheets, spreadsheetId, sheetName) {
 
   if (res.data.values?.length) return;
 
-  const headers = [
-    "Data/Hora", "ID Pedido", "Nome", "Telefone",
-    "Itens", "Valor Total (R$)", "Pagamento", "Parcelas", "Status", "ID Pagamento"
-  ];
-
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${quoteSheetName(sheetName)}!A1`,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: [headers] }
+    requestBody: { values: [SHEET_HEADERS] }
   });
 }
 
@@ -381,6 +446,31 @@ function buildPaymentDescription(lines) {
 function formatLineForSheet(line) {
   const variant = line.variant ? ` (${line.variant})` : "";
   return `${line.productName}${variant} x${line.quantity}`;
+}
+
+function summarizeOrderLines(lines) {
+  if (!lines.length) {
+    return { items: "", sizes: "" };
+  }
+
+  return {
+    items: lines.map((line) => line.productName).join("\n"),
+    sizes: lines.map(formatSizeForSheet).join("\n")
+  };
+}
+
+function formatSizeForSheet(line) {
+  if (!line.variant) {
+    return "—";
+  }
+
+  const sizeMatch = line.variant.match(/Tam\.\s*([A-Z0-9]+)/i);
+
+  if (sizeMatch) {
+    return sizeMatch[1];
+  }
+
+  return line.variant;
 }
 
 function cleanText(value, maxLength) {
