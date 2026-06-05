@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { google } from "googleapis";
 import { calculateOrder, sanitizeSelection } from "../shared/order.js";
-import { criarLinkPagamento, verificarPagamento } from "./infinitepay.js";
+import { criarLinkPagamento } from "./infinitepay.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,20 +51,23 @@ app.get("/api/config", (_req, res) => {
 
 app.post("/api/checkout", async (req, res) => {
   try {
-    const orderId = createOrderId();
     const customer = sanitizeCustomer(req.body?.customer);
     const selection = sanitizeSelection(req.body?.selection);
     const order = calculateOrder(selection);
+
+    if (!customer.name) {
+      return res.status(400).json({ error: "O campo nome é obrigatório." });
+    }
+
+    if (!customer.phone) {
+      return res.status(400).json({ error: "O campo telefone é obrigatório." });
+    }
 
     if (order.lines.length === 0) {
       return res.status(400).json({ error: "Selecione pelo menos um produto." });
     }
 
-    if (!customer.name || !customer.phone) {
-      return res.status(400).json({
-        error: "Nome e telefone sao obrigatorios para finalizar o pedido."
-      });
-    }
+    const orderId = createOrderId();
 
     const items = order.lines.map((line) => ({
       quantity: line.quantity,
@@ -84,19 +87,20 @@ app.post("/api/checkout", async (req, res) => {
       }
     });
 
-    await appendOrderToSheet({
-      event: "Novo pedido",
+    appendOrderToSheet({
       orderId,
       customer,
       order,
       status: "pending"
+    }).catch((err) => {
+      console.error("Erro ao registrar na planilha:", err);
     });
 
-    res.status(201).json({ orderId, url, order });
-  } catch (error) {
-    console.error("Erro ao criar checkout", error);
-    res.status(error.status || 500).json({
-      error: error.message || "Nao foi possivel criar o link de pagamento."
+    return res.status(201).json({ orderId, url });
+  } catch (err) {
+    console.error("Erro em /api/checkout:", err);
+    return res.status(err.status || 500).json({
+      error: err.message || "Não foi possível criar o link de pagamento."
     });
   }
 });
@@ -109,18 +113,25 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
       return res.sendStatus(200);
     }
 
+    const detail = [
+      transaction_nsu && `transaction_nsu: ${transaction_nsu}`,
+      invoice_slug && `slug: ${invoice_slug}`
+    ]
+      .filter(Boolean)
+      .join(", ");
+
     await appendOrderToSheet({
       event: "Atualizacao webhook",
       orderId,
       customer: { name: "", phone: "" },
       order: { lines: [], totalAmount: 0, totalCents: 0, totalQuantity: 0 },
-      status: status || "unknown",
-      detail: `transaction_nsu: ${transaction_nsu || ""}, slug: ${invoice_slug || ""}`
+      status: status || "webhook",
+      detail
     });
 
     res.sendStatus(200);
-  } catch (error) {
-    console.error("Erro no webhook InfinitePay", error);
+  } catch (err) {
+    console.error("Erro no webhook InfinitePay:", err);
     res.sendStatus(200);
   }
 });
@@ -145,7 +156,15 @@ function sanitizeCustomer(customer = {}) {
   };
 }
 
-async function appendOrderToSheet({ event = "Novo pedido", orderId, customer, order, status = "", detail = "" }) {
+async function appendOrderToSheet({
+  event = "Novo pedido",
+  orderId,
+  customer,
+  order,
+  status = "",
+  detail = "",
+  notes = ""
+}) {
   if (!isGoogleSheetsConfigured()) {
     return { enabled: false, status: "not_configured" };
   }
@@ -160,6 +179,7 @@ async function appendOrderToSheet({ event = "Novo pedido", orderId, customer, or
 
   const itemSummary = summarizeOrderLines(order.lines || []);
   const statusLabel = resolvePaymentStatus(status);
+  const detailText = detail || notes;
 
   const row = [
     formatDateTime(),
@@ -173,7 +193,7 @@ async function appendOrderToSheet({ event = "Novo pedido", orderId, customer, or
     order.totalAmount || "",
     "InfinitePay",
     statusLabel,
-    detail,
+    detailText,
     customer.notes || ""
   ];
 
@@ -232,6 +252,7 @@ function resolvePaymentStatus(status) {
     rejected: "Recusado",
     cancelled: "Cancelado",
     refunded: "Reembolsado",
+    webhook: "Webhook recebido",
     unknown: "—"
   };
   return map[status] || status || "—";

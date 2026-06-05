@@ -3,16 +3,21 @@ import { constants } from "node:crypto";
 
 const BASE_URL = "https://api.checkout.infinitepay.io";
 
-// Node 18+/OpenSSL 3 rejects legacy TLS cipher suites used by InfinitePay.
-// SSL_OP_LEGACY_SERVER_CONNECT allows the handshake to complete normally.
+// Node 18+/OpenSSL 3 rejeita cipher suites legados usados pela InfinitePay.
+// SSL_OP_LEGACY_SERVER_CONNECT permite o handshake sem afetar o restante da aplicação.
 const tlsAgent = new https.Agent({
   secureOptions: constants.SSL_OP_LEGACY_SERVER_CONNECT,
 });
 
-function httpsPost(url, body) {
+/**
+ * Faz um POST HTTPS usando node:https (com agente TLS permissivo).
+ * @returns {{ status: number, body: object|string }}
+ */
+function httpsPost(url, payload) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
-    const data = JSON.stringify(body);
+    const data = JSON.stringify(payload);
+
     const req = https.request(
       {
         hostname: parsed.hostname,
@@ -28,14 +33,17 @@ function httpsPost(url, body) {
         let raw = "";
         res.on("data", (chunk) => (raw += chunk));
         res.on("end", () => {
+          let body;
           try {
-            resolve({ status: res.statusCode, body: JSON.parse(raw) });
+            body = JSON.parse(raw);
           } catch {
-            resolve({ status: res.statusCode, body: raw });
+            body = raw;
           }
+          resolve({ status: res.statusCode, body });
         });
       }
     );
+
     req.on("error", reject);
     req.write(data);
     req.end();
@@ -44,16 +52,19 @@ function httpsPost(url, body) {
 
 /**
  * Cria um link de pagamento no Checkout Integrado da InfinitePay.
+ *
+ * @param {object} params
+ * @param {string} params.orderId  - ID único do pedido (order_nsu)
+ * @param {Array}  params.items    - [{ quantity, price (centavos, inteiro), description }]
+ * @param {object} params.cliente  - { nome, telefone, email? }
+ * @returns {Promise<{ url: string }>}
  */
 export async function criarLinkPagamento({ orderId, items, cliente }) {
   const handle = process.env.INFINITEPAY_HANDLE;
+  if (!handle) throw new Error("INFINITEPAY_HANDLE não configurado no .env");
 
-  if (!handle) {
-    throw new Error("INFINITEPAY_HANDLE não configurado no .env");
-  }
-
-  const appUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-  const apiUrl = process.env.BACKEND_URL || "http://localhost:3333";
+  const appUrl = process.env.APP_URL || "http://localhost:5173";
+  const apiUrl = process.env.API_URL || "http://localhost:3333";
 
   const payload = {
     handle,
@@ -61,9 +72,9 @@ export async function criarLinkPagamento({ orderId, items, cliente }) {
     redirect_url: `${appUrl}?pedido=${orderId}&status=concluido`,
     webhook_url: `${apiUrl}/api/webhooks/infinitepay`,
     items: items.map((item) => ({
-      quantity: item.quantity,
-      price: item.price,
-      description: item.description,
+      quantity: item.quantity,           // inteiro
+      price: item.price,                 // centavos, inteiro
+      description: String(item.description).slice(0, 255),
     })),
     customer: {
       name: cliente.nome,
@@ -92,14 +103,16 @@ export async function criarLinkPagamento({ orderId, items, cliente }) {
 }
 
 /**
- * Verifica o status de um pagamento na InfinitePay.
+ * Verifica o status de um pagamento na InfinitePay via payment_check.
+ *
+ * @param {object} params
+ * @param {string} params.orderId        - order_nsu do pedido
+ * @param {string} params.transactionNsu - transaction_nsu do webhook
+ * @param {string} params.slug           - invoice_slug do webhook
  */
 export async function verificarPagamento({ orderId, transactionNsu, slug }) {
   const handle = process.env.INFINITEPAY_HANDLE;
-
-  if (!handle) {
-    throw new Error("INFINITEPAY_HANDLE não configurado no .env");
-  }
+  if (!handle) throw new Error("INFINITEPAY_HANDLE não configurado no .env");
 
   const { status, body } = await httpsPost(`${BASE_URL}/payment_check`, {
     handle,
