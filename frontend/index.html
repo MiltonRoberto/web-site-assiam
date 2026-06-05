@@ -1,13 +1,18 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AASIAM | Pedidos</title>
-    <meta
-      name="description"
-      content="Formulario de pedidos da Associacao Atletica de Sistemas de Informacao"
-    />
+    <title>AASIAM | Loja Oficial</title>
+    <meta name="description" content="Loja oficial da Associação Atlética de Sistemas de Informação — Alcateia de Chernobyl" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <script>
+      // Apply persisted theme before first paint — prevents flash
+      const saved = localStorage.getItem("aasiam-theme");
+      if (saved === "light") document.documentElement.classList.replace("dark", "light");
+    </script>
   </head>
   <body>
     <div id="root"></div>

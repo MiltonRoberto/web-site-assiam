@@ -1,1014 +1,1340 @@
 import {
   ArrowLeft,
-  Backpack,
-  BedDouble,
   Check,
   CheckCircle2,
   ChevronRight,
-  Coffee,
   Copy,
   CreditCard,
+  Lock,
+  Minus,
+  Moon,
   PackageCheck,
-  Phone,
+  Plus,
   QrCode,
-  ShieldCheck,
+  Share2,
   ShoppingBag,
   ShoppingCart,
-  Shirt,
-  User,
+  Sun,
   X,
-  Minus,
-  Plus,
-  Trash2
+  Zap,
 } from "lucide-react";
-import { initMercadoPago, Payment } from "@mercadopago/sdk-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import gsap from "gsap";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { PRODUCTS } from "../../shared/products.js";
-import { calculateOrder, createEmptySelection } from "../../shared/order.js";
+import { createEmptySelection } from "../../shared/order.js";
 
-const currency = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+/* ─── constants ─── */
+const currency = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+});
+const fmt = (cents) => currency.format(cents / 100);
 
-const steps = [
-  { id: "shop", label: "Produtos" },
-  { id: "dados", label: "Dados" },
-  { id: "conferencia", label: "Revisão" },
-  { id: "pagamento", label: "Pagamento" }
+const FRETE_CENTS = 2000;
+
+const BANNER_SLIDES = [
+  { src: "/imgs/anuncio.png", alt: "AASIAM – Nova Coleção" },
+  { src: "/imgs/combo-alcateia.png", alt: "Combo Alcateia" },
+  { src: "/imgs/combo-alpha.png", alt: "Combo Alpha" },
+  { src: "/imgs/combo-essencial.png", alt: "Combo Essencial" },
 ];
 
-const productIcons = {
-  "moletom-verde": Shirt,
-  "moletom-bege": Shirt,
-  moletom: Shirt,
-  "kit-2-moletons": Shirt,
-  caneca: Coffee,
-  mochila: Backpack,
-  manta: BedDouble,
-  "kit-moletom-caneca": PackageCheck,
-  "kit-completo": ShoppingBag
+const CATEGORIES = [
+  { id: "moletom",    label: "Moletom"    },
+  { id: "acessorios", label: "Acessórios" },
+  { id: "kits",       label: "Kits"       },
+];
+
+const CATEGORY_MAP = {
+  "moletom-verde": "moletom",
+  "moletom-bege": "moletom",
+  "kit-2-moletons": "kits",
+  "kit-moletom-caneca": "kits",
+  "kit-completo": "kits",
+  caneca: "acessorios",
+  mochila: "acessorios",
+  manta: "acessorios",
 };
 
-const initialCustomer = { name: "", phone: "" };
-const preferredLogoSource = "/logo-aasiam.jpg";
-const fallbackLogoSource = "/logo-aasiam.svg";
-const mercadoPagoPublicKey = import.meta.env.VITE_MP_PUBLIC_KEY;
+const MATERIAL_MAP = {
+  moletom: "50% Algodão, 50% Poliéster. Conforto premium para treino e lazer.",
+  kits: "Itens da atlética reunidos com desconto de combo.",
+  acessorios: "Item oficial da atlética com identidade AASIAM.",
+};
 
-export default function App() {
-  const [customer, setCustomer] = useState(initialCustomer);
-  const [selection, setSelection] = useState(() => createEmptySelection());
-  const [step, setStep] = useState("dados");
-  const [cartOpen, setCartOpen] = useState(false);
-  const [customerSubmitted, setCustomerSubmitted] = useState(false);
-  const [lastResult, setLastResult] = useState(null);
+/* ─── helpers ─── */
+function normalizeQty(v) {
+  const q = Number.parseInt(v, 10);
+  return !Number.isFinite(q) || q < 0 ? 0 : Math.min(q, 99);
+}
 
-  const order = useMemo(() => calculateOrder(selection), [selection]);
-  const customerValidation = useMemo(() => validateCustomer(customer), [customer]);
-  const orderValidation = useMemo(() => validateOrder(order), [order]);
+function cartTotals(cart) {
+  const subtotal = cart.reduce((t, i) => t + i.unitCents * i.qty, 0);
+  const frete = cart.length > 0 ? FRETE_CENTS : 0;
+  return { subtotal, frete, total: subtotal + frete };
+}
 
-  function updateQuantity(productId, quantity) {
-    setSelection((c) => ({ ...c, [productId]: { ...c[productId], quantity: norm(quantity) } }));
+function cartToSelection(cart) {
+  const sel = createEmptySelection();
+  for (const item of cart) {
+    const { productId, _sel, qty } = item;
+    const product = PRODUCTS.find((p) => p.id === productId);
+    if (!product) continue;
+
+    if (product.kind === "sizedVariants") {
+      const v = product.variants[0];
+      sel[productId].variants[v.code][_sel.size] =
+        (sel[productId].variants[v.code][_sel.size] || 0) + qty;
+    } else if (product.kind === "doubleHoodie") {
+      sel[productId].verdeSize = _sel.verde;
+      sel[productId].begeSize = _sel.bege;
+      sel[productId].quantity = (sel[productId].quantity || 0) + qty;
+    } else if (product.kind === "modelQuantity") {
+      sel[productId].models[_sel.model] =
+        (sel[productId].models[_sel.model] || 0) + qty;
+    } else if (product.kind === "configuredBundle") {
+      sel[productId].hoodieVariant = _sel.variant;
+      sel[productId].hoodieSize = _sel.size;
+      if (_sel.backpack) sel[productId].backpackModel = _sel.backpack;
+      sel[productId].quantity = (sel[productId].quantity || 0) + qty;
+    } else {
+      sel[productId].quantity = (sel[productId].quantity || 0) + qty;
+    }
   }
+  return sel;
+}
 
-  function updateSizedVariant(productId, variantCode, size, quantity) {
-    setSelection((c) => ({
-      ...c,
-      [productId]: {
-        ...c[productId],
-        variants: {
-          ...c[productId].variants,
-          [variantCode]: { ...c[productId].variants[variantCode], [size]: norm(quantity) }
-        }
-      }
-    }));
+function buildCartItem(product, sel) {
+  const base = {
+    productId: product.id,
+    name: product.name,
+    image: product.images?.[0] || null,
+    unitCents: product.priceCents,
+    qty: 1,
+    _sel: sel,
+  };
+  if (product.kind === "sizedVariants") {
+    return {
+      ...base,
+      key: `${product.id}-${sel.size}`,
+      meta: `Tamanho: ${sel.size}`,
+    };
   }
-
-  function updateModelQuantity(productId, modelCode, quantity) {
-    setSelection((c) => ({
-      ...c,
-      [productId]: { ...c[productId], models: { ...c[productId].models, [modelCode]: norm(quantity) } }
-    }));
+  if (product.kind === "doubleHoodie") {
+    return {
+      ...base,
+      key: `${product.id}-${sel.verde}-${sel.bege}`,
+      meta: `Verde ${sel.verde} · Bege ${sel.bege}`,
+    };
   }
-
-  function updateBundleOption(productId, field, value) {
-    setSelection((c) => ({ ...c, [productId]: { ...c[productId], [field]: value } }));
+  if (product.kind === "modelQuantity") {
+    const mName =
+      product.models?.find((m) => m.code === sel.model)?.name || sel.model;
+    return {
+      ...base,
+      key: `${product.id}-${sel.model}`,
+      meta: `Modelo: ${mName}`,
+    };
   }
-
-  function submitCustomer(e) {
-    e.preventDefault();
-    setCustomerSubmitted(true);
-    if (!customerValidation.valid) return;
-    goToStep("shop");
+  if (product.kind === "configuredBundle") {
+    const vName =
+      product.variants?.find((v) => v.code === sel.variant)?.name ||
+      sel.variant;
+    const parts = [
+      `${vName} ${sel.size}`,
+      product.hasBackpack && `Mochila ${sel.backpack}`,
+    ].filter(Boolean);
+    return {
+      ...base,
+      key: `${product.id}-${sel.variant}-${sel.size}`,
+      meta: parts.join(" · "),
+    };
   }
-
-  function goToStep(next) {
-    setStep(next);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function resetOrder() {
-    setCustomer(initialCustomer);
-    setSelection(createEmptySelection());
-    setCustomerSubmitted(false);
-    setLastResult(null);
-    goToStep("dados");
-  }
-
-  return (
-    <div className="app-root">
-      <SiteHeader
-        step={step}
-        order={order}
-        cartOpen={cartOpen}
-        onCartToggle={() => setCartOpen((o) => !o)}
-        onStepClick={(s) => step !== "shop" && goToStep(s)}
-      />
-
-      {step === "shop" && (
-        <ShopPage
-          selection={selection}
-          order={order}
-          orderValidation={orderValidation}
-          onQuantityChange={updateQuantity}
-          onSizedVariantChange={updateSizedVariant}
-          onModelQuantityChange={updateModelQuantity}
-          onBundleOptionChange={updateBundleOption}
-          onCheckout={() => goToStep("conferencia")}
-          cartOpen={cartOpen}
-          onCartClose={() => setCartOpen(false)}
-        />
-      )}
-
-      {step === "dados" && (
-        <CustomerStep
-          customer={customer}
-          validation={customerValidation}
-          submitted={customerSubmitted}
-          onChange={(f, v) => setCustomer((c) => ({ ...c, [f]: v }))}
-          onSubmit={submitCustomer}
-        />
-      )}
-
-      {step === "conferencia" && (
-        <ReviewStep
-          customer={customer}
-          order={order}
-          onBack={() => goToStep("dados")}
-          onPayment={() => goToStep("pagamento")}
-        />
-      )}
-
-      {step === "pagamento" && (
-        <PaymentStep
-          customer={customer}
-          selection={selection}
-          order={order}
-          onBack={() => goToStep("conferencia")}
-          onFinished={setLastResult}
-          onNewOrder={resetOrder}
-        />
-      )}
-    </div>
-  );
-}
-
-/* ─── HEADER ─── */
-function SiteHeader({ step, order, cartOpen, onCartToggle }) {
-  return (
-    <header className="site-header">
-      <div className="header-inner">
-        <div className="brand-lockup">
-          <LogoMark />
-          <div>
-            <p className="eyebrow">Associação Atlética de SI</p>
-            <h1>AASIAM</h1>
-          </div>
-        </div>
-
-        <StepRail currentStep={step} />
-
-        <button
-          type="button"
-          className={`cart-btn ${cartOpen ? "cart-btn-active" : ""}`}
-          onClick={onCartToggle}
-          aria-label="Abrir carrinho"
-        >
-          <ShoppingCart size={20} />
-          {order.totalQuantity > 0 && (
-            <span className="cart-badge">{order.totalQuantity}</span>
-          )}
-          {order.totalQuantity > 0 && (
-            <span className="cart-total">{currency.format(order.totalAmount)}</span>
-          )}
-        </button>
-      </div>
-    </header>
-  );
-}
-
-/* ─── LOGO ─── */
-function LogoMark({ large = false }) {
-  const [broken, setBroken] = useState(false);
-  return (
-    <div className={`logo-mark ${large ? "logo-mark-large" : ""}`}>
-      {broken ? <span>SI</span> : (
-        <img src={preferredLogoSource} alt="Logo AASIAM" onError={() => setBroken(true)} />
-      )}
-    </div>
-  );
-}
-
-/* ─── STEP RAIL ─── */
-function StepRail({ currentStep }) {
-  const idx = steps.findIndex((s) => s.id === currentStep);
-  return (
-    <nav className="step-rail" aria-label="Etapas">
-      {steps.map((s, i) => (
-        <span key={s.id} className={`step-pill ${i <= idx ? "step-pill-active" : ""}`}>
-          <span className="step-pill-num">{i < idx ? <Check size={9} /> : i + 1}</span>
-          {s.label}
-        </span>
-      ))}
-    </nav>
-  );
-}
-
-/* ─── SHOP PAGE ─── */
-function ShopPage({
-  selection, order, orderValidation,
-  onQuantityChange, onSizedVariantChange, onModelQuantityChange, onBundleOptionChange,
-  onCheckout, cartOpen, onCartClose
-}) {
-  const sectionRefs = useRef({});
-
-  function scrollTo(productId) {
-    sectionRefs.current[productId]?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  return (
-    <div className="shop-layout">
-      <ProductNavBar products={PRODUCTS} onNav={scrollTo} order={order} />
-
-      <main className="shop-main">
-        <div className="product-list">
-          {PRODUCTS.map((product) => (
-            <div
-              key={product.id}
-              id={`product-${product.id}`}
-              ref={(el) => { sectionRefs.current[product.id] = el; }}
-            >
-              <ProductCard
-                product={product}
-                selection={selection[product.id]}
-                onQuantityChange={onQuantityChange}
-                onSizedVariantChange={onSizedVariantChange}
-                onModelQuantityChange={onModelQuantityChange}
-                onBundleOptionChange={onBundleOptionChange}
-              />
-            </div>
-          ))}
-        </div>
-      </main>
-
-      {/* Cart drawer */}
-      <CartDrawer
-        open={cartOpen}
-        order={order}
-        validation={orderValidation}
-        onClose={onCartClose}
-        onCheckout={onCheckout}
-      />
-
-      {/* Overlay */}
-      {cartOpen && <div className="cart-overlay" onClick={onCartClose} />}
-
-      {/* Sticky checkout bar */}
-      {order.totalQuantity > 0 && (
-        <div className="checkout-bar">
-          <span className="checkout-bar-info">
-            <ShoppingCart size={18} />
-            {order.totalQuantity} {order.totalQuantity === 1 ? "item" : "itens"} — {currency.format(order.totalAmount)}
-          </span>
-          <button type="button" className="primary-button checkout-bar-btn" onClick={onCheckout}>
-            Finalizar Pedido <ChevronRight size={16} />
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ─── PRODUCT NAV BAR ─── */
-function ProductNavBar({ products, onNav, order }) {
-  return (
-    <nav className="product-nav" aria-label="Navegar por produto">
-      <div className="product-nav-inner">
-        {products.map((p) => {
-          const Icon = productIcons[p.id] || ShoppingBag;
-          const qty = getProductQty(p, order);
-          return (
-            <button
-              key={p.id}
-              type="button"
-              className={`product-nav-item ${qty > 0 ? "product-nav-item-active" : ""}`}
-              onClick={() => onNav(p.id)}
-            >
-              <Icon size={14} />
-              <span>{p.shortName}</span>
-              {qty > 0 && <span className="product-nav-badge">{qty}</span>}
-            </button>
-          );
-        })}
-      </div>
-    </nav>
-  );
-}
-
-/* ─── CART DRAWER ─── */
-function CartDrawer({ open, order, validation, onClose, onCheckout }) {
-  return (
-    <aside className={`cart-drawer ${open ? "cart-drawer-open" : ""}`} aria-label="Carrinho">
-      <div className="cart-drawer-head">
-        <h2><ShoppingCart size={20} /> Carrinho</h2>
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="Fechar carrinho">
-          <X size={20} />
-        </button>
-      </div>
-
-      <div className="cart-drawer-body">
-        {order.lines.length === 0 ? (
-          <div className="cart-empty">
-            <ShoppingCart size={40} />
-            <p>Seu carrinho está vazio</p>
-            <small>Adicione produtos abaixo</small>
-          </div>
-        ) : (
-          <div className="cart-lines">
-            {order.lines.map((line) => (
-              <div className="cart-line" key={`${line.productId}-${line.variantCode}`}>
-                <div className="cart-line-info">
-                  <strong>{line.productName}</strong>
-                  {line.variant && <small>{line.variant}</small>}
-                  <span>x{line.quantity}</span>
-                </div>
-                <strong className="cart-line-price">{currency.format(line.totalCents / 100)}</strong>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {order.lines.length > 0 && (
-        <div className="cart-drawer-foot">
-          <div className="cart-total-row">
-            <span>Total</span>
-            <strong>{currency.format(order.totalAmount)}</strong>
-          </div>
-          <div className="trust-badges">
-            <span><ShieldCheck size={14} /> Pagamento seguro</span>
-            <span><CheckCircle2 size={14} /> Pedido registrado</span>
-          </div>
-          {!validation.valid && (
-            <div className="validation-box">{validation.messages.map((m) => <span key={m}>{m}</span>)}</div>
-          )}
-          <button type="button" className="primary-button" onClick={onCheckout} disabled={!validation.valid}>
-            Finalizar Pedido <ChevronRight size={16} />
-          </button>
-        </div>
-      )}
-    </aside>
-  );
-}
-
-/* ─── PRODUCT CARD ─── */
-function ProductCard({ product, selection, onQuantityChange, onSizedVariantChange, onModelQuantityChange, onBundleOptionChange }) {
-  const [added, setAdded] = useState(false);
-  const Icon = productIcons[product.id] || PackageCheck;
-  const qty = getProductSelectionQty(product, selection);
-
-  function handleAdd() {
-    setAdded(true);
-    setTimeout(() => setAdded(false), 1800);
-  }
-
-  return (
-    <article className="product-card">
-      <div className="product-card-inner">
-        {/* Image */}
-        <div className="product-card-media">
-          {product.images?.length > 0
-            ? <ImageCarousel images={product.images} alt={product.name} />
-            : <div className="product-art-placeholder"><Icon size={64} /></div>
-          }
-          <div className="product-badge">{product.tag}</div>
-        </div>
-
-        {/* Info + options */}
-        <div className="product-card-content">
-          <div className="product-card-top">
-            <div>
-              <h3 className="product-name">{product.name}</h3>
-              <p className="product-desc">{product.description}</p>
-            </div>
-            <div className="product-price">{currency.format(product.priceCents / 100)}</div>
-          </div>
-
-          <div className="product-card-options">
-            {product.kind === "sizedVariants" && (
-              <SizedVariantSelector
-                product={product}
-                selection={selection}
-                onChange={onSizedVariantChange}
-              />
-            )}
-            {product.kind === "doubleHoodie" && (
-              <DoubleHoodieSelector
-                product={product}
-                selection={selection}
-                onOptionChange={onBundleOptionChange}
-                onQuantityChange={onQuantityChange}
-              />
-            )}
-            {product.kind === "modelQuantity" && (
-              <ModelSelector product={product} selection={selection} onChange={onModelQuantityChange} />
-            )}
-            {product.kind === "configuredBundle" && (
-              <BundleSelector
-                product={product}
-                selection={selection}
-                onQuantityChange={onQuantityChange}
-                onOptionChange={onBundleOptionChange}
-              />
-            )}
-            {product.kind === "quantity" && (
-              <div className="quantity-row">
-                <span className="quantity-label">Quantidade</span>
-                <QuantityStepper
-                  value={selection.quantity}
-                  onChange={(v) => onQuantityChange(product.id, v)}
-                  label={`Quantidade de ${product.shortName}`}
-                  compact={false}
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="product-card-footer">
-            <div className="product-card-subtotal">
-              {qty > 0 && (
-                <span className="product-qty-badge">
-                  <Check size={12} /> {qty} no carrinho
-                </span>
-              )}
-            </div>
-            <button
-              type="button"
-              className={`add-btn ${added ? "add-btn-done" : ""} ${qty > 0 ? "add-btn-has" : ""}`}
-              onClick={handleAdd}
-            >
-              {added ? <><Check size={16} /> Adicionado!</> : <><Plus size={16} /> Adicionar</>}
-            </button>
-          </div>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-/* ─── IMAGE CAROUSEL ─── */
-function ImageCarousel({ images, alt }) {
-  const [index, setIndex] = useState(0);
-  if (images.length === 1) return <img className="product-img" src={images[0]} alt={alt} />;
-  return (
-    <div className="carousel">
-      <img className="product-img" src={images[index]} alt={`${alt} ${index + 1}`} />
-      <button type="button" className="carousel-btn carousel-btn-left" onClick={() => setIndex((i) => (i === 0 ? images.length - 1 : i - 1))} aria-label="Anterior">‹</button>
-      <button type="button" className="carousel-btn carousel-btn-right" onClick={() => setIndex((i) => (i === images.length - 1 ? 0 : i + 1))} aria-label="Próxima">›</button>
-      <div className="carousel-dots">
-        {images.map((_, i) => (
-          <span key={i} className={`carousel-dot ${i === index ? "carousel-dot-active" : ""}`} onClick={() => setIndex(i)} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ─── SIZED VARIANT SELECTOR ─── */
-function SizedVariantSelector({ product, selection, onChange }) {
-  const defaultSize = product.sizes[2] ?? product.sizes[0];
-  const variant = product.variants[0];
-  const [activeSize, setActiveSize] = useState(defaultSize);
-
-  const currentQty = selection?.variants?.[variant.code]?.[activeSize] ?? 0;
-
-  function handleSizeChange(size) {
-    product.sizes.forEach((s) => onChange(product.id, variant.code, s, 0));
-    setActiveSize(size);
-  }
-
-  function handleQtyChange(qty) {
-    product.sizes.forEach((s) => onChange(product.id, variant.code, s, s === activeSize ? qty : 0));
-  }
-
-  return (
-    <div className="options-block">
-      <div className="bundle-section-label">Tamanho</div>
-      <div className="size-chips">
-        {product.sizes.map((size) => (
-          <button key={size} type="button"
-            className={`size-chip ${activeSize === size ? "size-chip-active" : ""}`}
-            onClick={() => handleSizeChange(size)}
-          >{size}</button>
-        ))}
-      </div>
-      <div className="quantity-row">
-        <span className="quantity-label">Quantidade</span>
-        <QuantityStepper value={currentQty} onChange={handleQtyChange} label={`Quantidade ${variant.name} ${activeSize}`} compact={false} />
-      </div>
-    </div>
-  );
-}
-
-/* ─── DOUBLE HOODIE SELECTOR ─── */
-function DoubleHoodieSelector({ product, selection, onOptionChange, onQuantityChange }) {
-  const verde = product.variants.find((v) => v.code === "verde");
-  const bege = product.variants.find((v) => v.code === "bege");
-
-  return (
-    <div className="options-block">
-      <div className="bundle-includes">
-        {product.includes.map((item) => <span key={item}>{item}</span>)}
-      </div>
-
-      <div className="double-hoodie-grid">
-        <div className="double-hoodie-col">
-          <div className="double-hoodie-head">
-            <span className="color-swatch" style={{ background: verde.swatch }} />
-            <span>{verde.name}</span>
-          </div>
-          <div className="bundle-section-label">Tamanho</div>
-          <div className="size-chips">
-            {product.sizes.map((size) => (
-              <button key={size} type="button"
-                className={`size-chip ${selection?.verdeSize === size ? "size-chip-active" : ""}`}
-                onClick={() => onOptionChange(product.id, "verdeSize", size)}
-              >{size}</button>
-            ))}
-          </div>
-        </div>
-
-        <div className="double-hoodie-col">
-          <div className="double-hoodie-head">
-            <span className="color-swatch" style={{ background: bege.swatch }} />
-            <span>{bege.name}</span>
-          </div>
-          <div className="bundle-section-label">Tamanho</div>
-          <div className="size-chips">
-            {product.sizes.map((size) => (
-              <button key={size} type="button"
-                className={`size-chip ${selection?.begeSize === size ? "size-chip-active" : ""}`}
-                onClick={() => onOptionChange(product.id, "begeSize", size)}
-              >{size}</button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="quantity-row">
-        <span className="quantity-label">Quantidade</span>
-        <QuantityStepper
-          value={selection?.quantity ?? 0}
-          onChange={(v) => onQuantityChange(product.id, v)}
-          label="Quantidade do kit"
-          compact={false}
-        />
-      </div>
-    </div>
-  );
-}
-
-/* ─── MODEL SELECTOR ─── */
-function ModelSelector({ product, selection, onChange }) {
-  return (
-    <div className="options-block">
-      <div className="bundle-section-label">Modelo</div>
-      <div className="option-list">
-        {product.models.map((model) => (
-          <div className="model-row" key={model.code}>
-            <div>
-              <strong>{model.name}</strong>
-              <small>{model.description}</small>
-            </div>
-            <QuantityStepper
-              value={selection.models[model.code]}
-              onChange={(v) => onChange(product.id, model.code, v)}
-              label={`Quantidade mochila ${model.name}`}
-            />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ─── BUNDLE SELECTOR ─── */
-function BundleSelector({ product, selection, onQuantityChange, onOptionChange }) {
-  return (
-    <div className="options-block">
-      <div className="bundle-includes">
-        {product.includes.map((item) => <span key={item}>{item}</span>)}
-      </div>
-
-      {product.hasHoodie && (
-        <>
-          <div className="bundle-section-label">Tipo do moletom</div>
-          <div className="option-chips">
-            {product.variants.map((v) => (
-              <button key={v.code} type="button"
-                className={`option-chip ${selection.hoodieVariant === v.code ? "option-chip-active" : ""}`}
-                onClick={() => onOptionChange(product.id, "hoodieVariant", v.code)}
-              >
-                <span className="color-swatch" style={{ background: v.swatch }} />
-                {v.name}
-                {selection.hoodieVariant === v.code && <Check size={13} />}
-              </button>
-            ))}
-          </div>
-          <div className="bundle-section-label">Tamanho</div>
-          <div className="size-chips">
-            {product.sizes.map((size) => (
-              <button key={size} type="button"
-                className={`size-chip ${selection.hoodieSize === size ? "size-chip-active" : ""}`}
-                onClick={() => onOptionChange(product.id, "hoodieSize", size)}
-              >{size}</button>
-            ))}
-          </div>
-        </>
-      )}
-
-      {product.hasBackpack && (
-        <>
-          <div className="bundle-section-label">Modelo de mochila</div>
-          <div className="option-chips">
-            {product.models.map((m) => (
-              <button key={m.code} type="button"
-                className={`option-chip ${selection.backpackModel === m.code ? "option-chip-active" : ""}`}
-                onClick={() => onOptionChange(product.id, "backpackModel", m.code)}
-              >
-                {m.name}
-                {selection.backpackModel === m.code && <Check size={13} />}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-
-      <div className="quantity-row">
-        <span className="quantity-label">Quantidade</span>
-        <QuantityStepper
-          value={selection.quantity}
-          onChange={(v) => onQuantityChange(product.id, v)}
-          label={`Quantidade de ${product.shortName}`}
-          compact={false}
-        />
-      </div>
-    </div>
-  );
-}
-
-/* ─── QUANTITY STEPPER ─── */
-function QuantityStepper({ value, onChange, label, compact = true }) {
-  return (
-    <div className={`stepper ${compact ? "stepper-compact" : ""}`} aria-label={label}>
-      <button type="button" aria-label="Diminuir" onClick={() => onChange(Math.max(0, value - 1))}><Minus size={14} /></button>
-      <input value={value} aria-label={label} inputMode="numeric" onChange={(e) => onChange(e.target.value)} />
-      <button type="button" aria-label="Aumentar" onClick={() => onChange(value + 1)}><Plus size={14} /></button>
-    </div>
-  );
-}
-
-/* ─── CUSTOMER STEP ─── */
-function CustomerStep({ customer, validation, submitted, onChange, onSubmit }) {
-  return (
-    <main className="step-page">
-      <div className="step-page-inner">
-        <div className="step-card">
-          <div className="section-title">
-            <User size={22} />
-            <div>
-              <h2>Seus dados</h2>
-              <p>Nome e telefone para identificar a compra.</p>
-            </div>
-          </div>
-
-          <form onSubmit={onSubmit} className="customer-form">
-            <label>
-              Nome completo
-              <span className="field-control">
-                <User size={16} />
-                <input value={customer.name} onChange={(e) => onChange("name", e.target.value)} autoComplete="name" placeholder="Seu nome completo" />
-              </span>
-            </label>
-            <label>
-              Telefone
-              <span className="field-control">
-                <Phone size={16} />
-                <input value={customer.phone} onChange={(e) => onChange("phone", e.target.value)} autoComplete="tel" inputMode="tel" placeholder="(44) 99999-9999" />
-              </span>
-            </label>
-
-            {submitted && !validation.valid && (
-              <div className="validation-box">
-                {validation.messages.map((m) => <span key={m}>{m}</span>)}
-              </div>
-            )}
-
-            <button type="submit" className="primary-button">
-              Continuar <ChevronRight size={16} />
-            </button>
-          </form>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-/* ─── REVIEW STEP ─── */
-function ReviewStep({ customer, order, onBack, onPayment }) {
-  return (
-    <main className="step-page">
-      <div className="step-page-inner">
-        <button type="button" className="ghost-button back-btn" onClick={onBack}>
-          <ArrowLeft size={16} /> Voltar
-        </button>
-
-        <div className="step-card">
-          <div className="section-title">
-            <CheckCircle2 size={22} />
-            <div><h2>Revisar pedido</h2><p>Confirme os dados antes de pagar.</p></div>
-          </div>
-
-          <div className="review-grid">
-            <div className="review-data"><span>Nome</span><strong>{customer.name}</strong></div>
-            <div className="review-data"><span>Telefone</span><strong>{customer.phone}</strong></div>
-          </div>
-
-          <div className="review-lines">
-            <OrderLines order={order} />
-            <TotalRow order={order} />
-          </div>
-
-          <div className="review-actions">
-            <button type="button" className="ghost-button" onClick={onBack}>Ajustar</button>
-            <button type="button" className="primary-button review-pay-btn" onClick={onPayment}>
-              Ir para pagamento <CreditCard size={16} />
-            </button>
-          </div>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-/* ─── ORDER LINES ─── */
-function OrderLines({ order }) {
-  if (order.lines.length === 0) return <p className="empty-summary">Nenhum item.</p>;
-  return (
-    <div className="summary-lines">
-      {order.lines.map((line) => (
-        <div className="summary-line" key={`${line.productId}-${line.variantCode}`}>
-          <span>
-            {line.productName}
-            {line.variant && <small>{line.variant}</small>}
-            <small>x{line.quantity}</small>
-          </span>
-          <strong>{currency.format(line.totalCents / 100)}</strong>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TotalRow({ order }) {
-  return (
-    <div className="total-row">
-      <span>Total</span>
-      <strong>{currency.format(order.totalAmount)}</strong>
-    </div>
-  );
-}
-
-/* ─── PAYMENT STEP ─── */
-function PaymentStep({ customer, selection, order, onBack, onFinished, onNewOrder }) {
-  const [config, setConfig] = useState(null);
-  const [paymentResult, setPaymentResult] = useState(null);
-  const [paymentError, setPaymentError] = useState("");
-  const [brickReady, setBrickReady] = useState(false);
-  const publicKey = isMercadoPagoPublicKeyConfigured(mercadoPagoPublicKey)
-    ? mercadoPagoPublicKey
-    : "";
-
-  useEffect(() => {
-    fetch("/api/config")
-      .then((r) => r.json())
-      .then(setConfig)
-      .catch(() => setConfig({ mercadoPagoConfigured: false, googleSheetsConfigured: false }));
-  }, []);
-
-  useEffect(() => {
-    if (publicKey) initMercadoPago(publicKey, { locale: "pt-BR" });
-  }, [publicKey]);
-
-  const initialization = useMemo(() => ({ amount: order.totalAmount, payer: { email: "" } }), [order.totalAmount]);
-  const customization = useMemo(() => ({
-    visual: { style: { theme: "default" } },
-    paymentMethods: { creditCard: "all", bankTransfer: "all" }
-  }), []);
-
-  async function submitPayment(payload) {
-    setPaymentError("");
-    const res = await fetch("/api/payments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customer, selection, payment: payload })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Erro ao registrar pedido.");
-    setPaymentResult(data);
-    onFinished(data);
-    return data;
-  }
-
-  async function handleMPSubmit({ selectedPaymentMethod, formData }) {
-    try { return await submitPayment({ selectedPaymentMethod, formData }); }
-    catch (e) { setPaymentError(e.message); throw e; }
-  }
-
-  async function handleSimulated() {
-    try {
-      await submitPayment({ selectedPaymentMethod: "pix", formData: { payment_method_id: "pix", payer: { email: "" } } });
-    } catch (e) { setPaymentError(e.message); }
-  }
-
-  if (paymentResult) return <PaymentResult result={paymentResult} onNewOrder={onNewOrder} onBack={onBack} />;
-
-  return (
-    <main className="step-page">
-      <div className="step-page-inner">
-        <button type="button" className="ghost-button back-btn" onClick={onBack}>
-          <ArrowLeft size={16} /> Voltar
-        </button>
-
-        <div className="payment-layout">
-          <div className="step-card">
-            <div className="section-title">
-              <CreditCard size={22} />
-              <div><h2>Pagamento</h2><p>Pix ou cartão de crédito em até 4x.</p></div>
-            </div>
-
-            {paymentError && <div className="error-box">{paymentError}</div>}
-
-            {publicKey ? (
-              <div className="mp-wrapper">
-                {!brickReady && <div className="loading-box">Carregando...</div>}
-                <Payment
-                  key={`${order.totalCents}`}
-                  initialization={initialization}
-                  customization={customization}
-                  onSubmit={handleMPSubmit}
-                  onReady={() => setBrickReady(true)}
-                  onError={(e) => setPaymentError(e?.message || "Erro no Mercado Pago.")}
-                />
-              </div>
-            ) : (
-              <div className="config-box">
-                <h3>Modo de teste</h3>
-                <p>Configure <strong>VITE_MP_PUBLIC_KEY</strong> e <strong>MP_ACCESS_TOKEN</strong> no .env para pagamentos reais.</p>
-                <button type="button" className="primary-button" onClick={handleSimulated}>
-                  <QrCode size={16} /> Registrar pedido teste
-                </button>
-              </div>
-            )}
-          </div>
-
-          <aside className="payment-aside">
-            <div className="step-card receipt-card">
-              <h3>Resumo</h3>
-              <OrderLines order={order} />
-              <TotalRow order={order} />
-              <div className="trust-badges">
-                <span><ShieldCheck size={14} /> Pagamento seguro</span>
-                <span><CreditCard size={14} /> Até 4x no cartão</span>
-                <span><CheckCircle2 size={14} /> Confirmação imediata</span>
-              </div>
-            </div>
-          </aside>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-/* ─── PAYMENT RESULT ─── */
-function PaymentResult({ result, onNewOrder, onBack }) {
-  const payment = result.payment || {};
-  const pixData = payment.point_of_interaction?.transaction_data || {};
-  const statusCopy = getStatusCopy(payment.status);
-
-  return (
-    <main className="step-page">
-      <div className="step-page-inner">
-        <div className="result-panel step-card">
-          <div className="result-icon"><CheckCircle2 size={32} /></div>
-          <p className="eyebrow">Pedido {result.orderId}</p>
-          <h2>{statusCopy.title}</h2>
-          <p>{statusCopy.description}</p>
-
-          <div className="result-grid">
-            <div><span>Status</span><strong>{payment.status || "registrado"}</strong></div>
-            <div><span>Total</span><strong>{currency.format(result.order?.totalAmount || 0)}</strong></div>
-            <div><span>Planilha</span><strong>{result.sheet?.enabled ? "Enviado" : "—"}</strong></div>
-          </div>
-
-          {pixData.qr_code_base64 && (
-            <img className="pix-image" src={`data:image/png;base64,${pixData.qr_code_base64}`} alt="QR Code Pix" />
-          )}
-          {pixData.qr_code && (
-            <div className="pix-copy">
-              <label>Código Pix<textarea value={pixData.qr_code} readOnly rows={3} /></label>
-              <button type="button" className="ghost-button" onClick={() => navigator.clipboard?.writeText(pixData.qr_code)}>
-                <Copy size={15} /> Copiar
-              </button>
-            </div>
-          )}
-          {pixData.ticket_url && (
-            <a className="ticket-link" href={pixData.ticket_url} target="_blank" rel="noreferrer">Abrir instrução de pagamento</a>
-          )}
-
-          <div className="result-actions">
-            <button type="button" className="ghost-button" onClick={onBack}><ArrowLeft size={15} /> Revisar</button>
-            <button type="button" className="primary-button" onClick={onNewOrder}><PackageCheck size={15} /> Novo pedido</button>
-          </div>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-/* ─── HELPERS ─── */
-function validateCustomer(c) {
-  const msgs = [];
-  if (c.name.trim().length < 3) msgs.push("Informe o nome.");
-  if (c.phone.replace(/\D/g, "").length < 10) msgs.push("Informe um telefone válido.");
-  return { valid: msgs.length === 0, messages: msgs };
-}
-
-function validateOrder(order) {
-  const msgs = [];
-  if (order.lines.length === 0) msgs.push("Selecione pelo menos um item.");
-  return { valid: msgs.length === 0, messages: msgs };
+  return { ...base, key: product.id, meta: null };
 }
 
 function getStatusCopy(status) {
   const map = {
-    approved: { title: "Pagamento aprovado!", description: "Pedido registrado e pagamento confirmado." },
-    pending: { title: "Aguardando pagamento", description: "Conclua o pagamento pelo QR Code Pix." },
-    in_process: { title: "Pagamento em análise", description: "O Mercado Pago está processando." },
-    rejected: { title: "Pagamento recusado", description: "Tente outra forma de pagamento." },
-    simulated: { title: "Pedido registrado (teste)", description: "Configure as credenciais para pagamentos reais." }
+    approved: {
+      title: "Pagamento aprovado!",
+      desc: "Pedido registrado e pagamento confirmado.",
+    },
+    pending: {
+      title: "Aguardando pagamento",
+      desc: "Conclua o pagamento pelo QR Code Pix.",
+    },
+    in_process: {
+      title: "Pagamento em análise",
+      desc: "O Mercado Pago está processando.",
+    },
+    rejected: {
+      title: "Pagamento recusado",
+      desc: "Tente outra forma de pagamento.",
+    },
+    simulated: {
+      title: "Pedido registrado",
+      desc: "Modo de teste. Configure as credenciais para pagamentos reais.",
+    },
   };
-  return map[status] || { title: "Pedido registrado", description: "Acompanhe pela planilha." };
+  return (
+    map[status] || {
+      title: "Pedido registrado",
+      desc: "Acompanhe a confirmação pela planilha.",
+    }
+  );
 }
 
-function norm(value) {
-  const q = Number.parseInt(value, 10);
-  return !Number.isFinite(q) || q < 0 ? 0 : Math.min(q, 99);
+/* ─── fly-to-cart animation ─── */
+function flyToCart(sourceImg) {
+  const cartBtn = document.querySelector(".cart-btn");
+  if (!cartBtn || !sourceImg) return;
+  const fr = sourceImg.getBoundingClientRect();
+  const to = cartBtn.getBoundingClientRect();
+  const size = Math.min(fr.width, fr.height, 64);
+  const el = document.createElement("div");
+  el.style.cssText = `position:fixed;top:${fr.top + fr.height / 2 - size / 2}px;left:${fr.left + fr.width / 2 - size / 2}px;width:${size}px;height:${size}px;background:url(${sourceImg.src}) center/cover;border-radius:10px;z-index:9999;pointer-events:none;`;
+  document.body.appendChild(el);
+  gsap.to(el, {
+    duration: 0.62,
+    x: to.left + to.width / 2 - (fr.left + fr.width / 2),
+    y: to.top + to.height / 2 - (fr.top + fr.height / 2),
+    width: 22, height: 22, borderRadius: "50%", opacity: 0,
+    ease: "power2.in",
+    onComplete() {
+      el.remove();
+      gsap.fromTo(".cart-btn", { scale: 1 }, { scale: 1.4, duration: 0.12, yoyo: true, repeat: 1, ease: "power1.inOut" });
+    },
+  });
 }
 
-function getProductSelectionQty(product, selection) {
-  if (!selection) return 0;
+/* ─── page transition ─── */
+function AnimatedPage({ view, children }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.fromTo(
+        ".fade-in",
+        { y: 12, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.36, ease: "power2.out", stagger: 0.04 },
+      );
+    }, ref);
+    return () => ctx.revert();
+  }, [view]);
+  return <div ref={ref}>{children}</div>;
+}
+
+/* ══════════════════════════════════════════════════════
+   APP
+══════════════════════════════════════════════════════ */
+export default function App() {
+  const [view, setView] = useState("catalog");
+  const [selectedProduct, setProduct] = useState(null);
+  const [cart, setCart] = useState([]);
+  const [paymentResult, setResult] = useState(null);
+  const [theme, setTheme] = useState(
+    () => localStorage.getItem("aasiam-theme") || "dark",
+  );
+
+  /* apply theme class to <html> */
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.toggle("dark", theme === "dark");
+    html.classList.toggle("light", theme === "light");
+    localStorage.setItem("aasiam-theme", theme);
+  }, [theme]);
+
+  function toggleTheme() {
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
+  }
+
+  function go(nextView) {
+    setView(nextView);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function scrollToCategory(catId) {
+    if (view !== "catalog") {
+      setView("catalog");
+      setTimeout(() => {
+        document
+          .getElementById(`cat-${catId}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+    } else {
+      document
+        .getElementById(`cat-${catId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  function openProduct(product) {
+    setProduct(product);
+    go("detail");
+  }
+
+  function addToCart(item) {
+    setCart((prev) => {
+      const existing = prev.find((i) => i.key === item.key);
+      if (existing)
+        return prev.map((i) =>
+          i.key === item.key ? { ...i, qty: i.qty + 1 } : i,
+        );
+      return [...prev, item];
+    });
+  }
+
+  function updateQty(key, delta) {
+    setCart((prev) =>
+      prev
+        .map((i) =>
+          i.key === key ? { ...i, qty: Math.max(0, i.qty + delta) } : i,
+        )
+        .filter((i) => i.qty > 0),
+    );
+  }
+
+  function removeItem(key) {
+    setCart((prev) => prev.filter((i) => i.key !== key));
+  }
+
+  function resetAll() {
+    setCart([]);
+    setResult(null);
+    go("catalog");
+  }
+
+  const cartCount = cart.reduce((t, i) => t + i.qty, 0);
+
+  return (
+    <div className="app-shell">
+      <SiteHeader
+        view={view}
+        cartCount={cartCount}
+        theme={theme}
+        onScrollTo={scrollToCategory}
+        onHome={() => go("catalog")}
+        onCart={() => go("cart")}
+        onToggleTheme={toggleTheme}
+      />
+
+      <main style={{ flex: 1 }}>
+        <AnimatedPage view={view}>
+          {view === "catalog" && (
+            <CatalogView onOpen={openProduct} className="fade-in" />
+          )}
+          {view === "detail" && selectedProduct && (
+            <DetailView
+              product={selectedProduct}
+              onBack={() => go("catalog")}
+              onAdd={(item) => addToCart(item)}
+              onBuyNow={(item) => { addToCart(item); go("checkout"); }}
+              className="fade-in"
+            />
+          )}
+          {view === "cart" && (
+            <CartView
+              cart={cart}
+              onQty={updateQty}
+              onRemove={removeItem}
+              onShop={() => go("catalog")}
+              onCheckout={() => go("checkout")}
+              className="fade-in"
+            />
+          )}
+          {view === "checkout" && (
+            <CheckoutView
+              cart={cart}
+              onBack={() => go("cart")}
+              onResult={(r) => {
+                setResult(r);
+                go("confirmation");
+              }}
+              className="fade-in"
+            />
+          )}
+          {view === "confirmation" && (
+            <ConfirmationView
+              result={paymentResult}
+              onNew={resetAll}
+              className="fade-in"
+            />
+          )}
+        </AnimatedPage>
+      </main>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   HEADER
+══════════════════════════════════════════════════════ */
+function SiteHeader({
+  view,
+  cartCount,
+  theme,
+  onScrollTo,
+  onHome,
+  onCart,
+  onToggleTheme,
+}) {
+  const [brokenDesktop, setBrokenDesktop] = useState(false);
+  const [brokenMobile, setBrokenMobile] = useState(false);
+
+  const fallbackSpan = (
+    <span
+      style={{
+        width: 36,
+        height: 36,
+        display: "grid",
+        placeItems: "center",
+        background: "var(--green-softer)",
+        borderRadius: 8,
+        fontWeight: 800,
+        fontSize: "0.7rem",
+        color: "var(--green-bright)",
+      }}
+    >
+      SI
+    </span>
+  );
+
+  return (
+    <>
+      {/* Logo bar — visible only on mobile via CSS */}
+      <div className="mobile-top-bar">
+        <button
+          type="button"
+          className="brand-lockup mobile-brand"
+          onClick={onHome}
+          aria-label="Início"
+        >
+          {brokenMobile ? (
+            fallbackSpan
+          ) : (
+            <img
+              src="/logo-aasiam.jpg"
+              alt="AASIAM"
+              className="brand-logo"
+              onError={() => setBrokenMobile(true)}
+            />
+          )}
+          <span className="wordmark">AASIAM</span>
+        </button>
+      </div>
+
+      <header className="site-header">
+        <div className="header-inner">
+          <div className="header-bar">
+            {/* Brand + logo — hidden on mobile */}
+            <button
+              type="button"
+              className="brand-lockup"
+              onClick={onHome}
+              aria-label="Início"
+            >
+              {brokenDesktop ? (
+                fallbackSpan
+              ) : (
+                <img
+                  src="/logo-aasiam.jpg"
+                  alt="AASIAM"
+                  className="brand-logo"
+                  onError={() => setBrokenDesktop(true)}
+                />
+              )}
+              <span className="wordmark">AASIAM</span>
+            </button>
+
+            {/* Category nav */}
+            <nav className="main-nav" aria-label="Categorias">
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className="nav-link"
+                  onClick={() => onScrollTo(c.id)}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </nav>
+
+            {/* Theme toggle + cart */}
+            <div className="header-actions">
+              <button
+                type="button"
+                className="theme-btn"
+                onClick={onToggleTheme}
+                aria-label={theme === "dark" ? "Modo claro" : "Modo escuro"}
+              >
+                {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+              </button>
+
+              <button
+                type="button"
+                className="cart-btn"
+                onClick={onCart}
+                aria-label="Carrinho"
+              >
+                <ShoppingCart size={18} />
+                {cartCount > 0 && (
+                  <span className="cart-badge">{cartCount}</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+    </>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   CATALOG VIEW — all categories on one page
+══════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════
+   HERO BANNER — auto-rotating promotional carousel
+══════════════════════════════════════════════════════ */
+const SLIDE_POS = {
+  center: { transform: "translateX(0) translateZ(0px)   rotateY(0deg)",    opacity: 1,    zIndex: 4, filter: "brightness(1)"    },
+  right:  { transform: "translateX(54%) translateZ(-160px) rotateY(-52deg)", opacity: 0.5,  zIndex: 3, filter: "brightness(0.5)"  },
+  left:   { transform: "translateX(-54%) translateZ(-160px) rotateY(52deg)", opacity: 0.5, zIndex: 3, filter: "brightness(0.5)"  },
+  hidden: { transform: "translateX(0)   translateZ(-300px) rotateY(0deg)",  opacity: 0,    zIndex: 1, filter: "brightness(0)"    },
+};
+
+function HeroBanner() {
+  const [current, setCurrent] = useState(0);
+  const dragStartX = useRef(0);
+  const wasDrag    = useRef(false);
+  const n = BANNER_SLIDES.length;
+
+  useEffect(() => {
+    const t = setInterval(() => setCurrent((c) => (c + 1) % n), 4500);
+    return () => clearInterval(t);
+  }, [n]);
+
+  function go(dir) { setCurrent((c) => (c + dir + n) % n); }
+
+  function onPointerDown(e) {
+    dragStartX.current = e.touches?.[0]?.clientX ?? e.clientX;
+    wasDrag.current = false;
+  }
+
+  function onPointerUp(e) {
+    const endX = e.changedTouches?.[0]?.clientX ?? e.clientX;
+    const delta = dragStartX.current - endX;
+    if (Math.abs(delta) > 40) { go(delta > 0 ? 1 : -1); wasDrag.current = true; }
+  }
+
+  function slidePos(i) {
+    const off = ((i - current) % n + n) % n;
+    const norm = off > Math.floor(n / 2) ? off - n : off;
+    if (norm === 0)  return SLIDE_POS.center;
+    if (norm === 1)  return SLIDE_POS.right;
+    if (norm === -1) return SLIDE_POS.left;
+    return SLIDE_POS.hidden;
+  }
+
+  return (
+    <div
+      className="hero-carousel"
+      onMouseDown={onPointerDown}
+      onMouseUp={onPointerUp}
+      onTouchStart={onPointerDown}
+      onTouchEnd={onPointerUp}
+    >
+      <div className="hero-stage">
+        {BANNER_SLIDES.map((slide, i) => (
+          <div
+            key={slide.src}
+            className="hero-slide"
+            style={slidePos(i)}
+            onClick={() => { if (!wasDrag.current) setCurrent(i); }}
+          >
+            <img src={slide.src} alt={slide.alt} draggable={false} />
+          </div>
+        ))}
+      </div>
+
+      <button type="button" className="hero-arrow hero-prev" onClick={() => go(-1)} aria-label="Anterior" />
+      <button type="button" className="hero-arrow hero-next" onClick={() => go(1)}  aria-label="Próximo"  />
+
+      <div className="hero-dots">
+        {BANNER_SLIDES.map((_, i) => (
+          <button
+            key={i}
+            type="button"
+            className={`hero-dot${i === current ? " active" : ""}`}
+            onClick={() => setCurrent(i)}
+            aria-label={`Slide ${i + 1}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CatalogView({ onOpen, className }) {
+  const [activeFilter, setActiveFilter] = useState("todos");
+  const visibleCats = activeFilter === "todos"
+    ? CATEGORIES
+    : CATEGORIES.filter((c) => c.id === activeFilter);
+
+  return (
+    <div className={`page content-pad ${className || ""}`}>
+      <HeroBanner />
+
+      <div className="cat-filter">
+        <button
+          type="button"
+          className={`cat-pill${activeFilter === "todos" ? " active" : ""}`}
+          onClick={() => setActiveFilter("todos")}
+        >
+          Todos
+        </button>
+        {CATEGORIES.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            className={`cat-pill${activeFilter === c.id ? " active" : ""}`}
+            onClick={() => setActiveFilter(c.id)}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      {visibleCats.map((cat) => {
+        const list = PRODUCTS.filter((p) => CATEGORY_MAP[p.id] === cat.id);
+        return (
+          <section key={cat.id} id={`cat-${cat.id}`} className="catalog-section">
+            <div className="section-head">
+              <h2 className="section-title">{cat.label}</h2>
+              <span className="section-count">
+                {list.length} {list.length === 1 ? "produto" : "produtos"}
+              </span>
+            </div>
+            <div className="catalog-grid">
+              {list.map((p) => (
+                <ProductTile key={p.id} product={p} onOpen={onOpen} />
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProductTile({ product, onOpen }) {
+  const img = product.images?.[0];
+  return (
+    <button type="button" className="tile" onClick={() => onOpen(product)}>
+      <div className="tile-media">
+        {img ? (
+          <img src={img} alt={product.name} />
+        ) : (
+          <div className="tile-placeholder">
+            <ShoppingBag size={48} />
+          </div>
+        )}
+        <span className="tile-tag">{product.tag}</span>
+      </div>
+      <div className="tile-name">{product.name}</div>
+      <div className="tile-foot">
+        <span className="tile-price">{fmt(product.priceCents)}</span>
+        <span className="tile-cta">
+          Ver <ChevronRight size={14} />
+        </span>
+      </div>
+    </button>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   PRODUCT DETAIL VIEW
+══════════════════════════════════════════════════════ */
+function DetailView({ product, onBack, onAdd, onBuyNow, className }) {
+  const [imgIndex, setImgIndex] = useState(0);
+  const [sel, setSel]           = useState(() => buildInitialSel(product));
+  const [added, setAdded]       = useState(false);
+  const imgRef    = useRef(null);
+  const swipeRef  = useRef(0);
+
+  const images = product.images || [];
+  const cat    = CATEGORY_MAP[product.id] || "acessorios";
+
+  useEffect(() => { setImgIndex(0); }, [product.id]);
+
+  function prevImg() { setImgIndex((i) => (i - 1 + images.length) % images.length); }
+  function nextImg() { setImgIndex((i) => (i + 1) % images.length); }
+
+  /* swipe on the image */
+  function onSwipeStart(e) { swipeRef.current = e.touches?.[0]?.clientX ?? e.clientX; }
+  function onSwipeEnd(e) {
+    const dx = swipeRef.current - (e.changedTouches?.[0]?.clientX ?? e.clientX);
+    if (Math.abs(dx) > 40) dx > 0 ? nextImg() : prevImg();
+  }
+
+  function set(k, v) { setSel((s) => ({ ...s, [k]: v })); }
+
+  function handleAdd() {
+    onAdd(buildCartItem(product, sel));
+    flyToCart(imgRef.current);
+    setAdded(true);
+    setTimeout(() => setAdded(false), 1800);
+  }
+
+  function handleBuyNow() { onBuyNow(buildCartItem(product, sel)); }
+
+  async function handleShare() {
+    const url  = window.location.origin;
+    const text = `${product.name} — ${fmt(product.priceCents)} | AASIAM`;
+    if (navigator.share) {
+      try { await navigator.share({ title: product.name, text, url }); } catch {}
+    } else {
+      window.open(`https://wa.me/?text=${encodeURIComponent(text + "\n" + url)}`, "_blank", "noopener");
+    }
+  }
+
+  return (
+    <div className={`page content-pad ${className || ""}`}>
+      <button type="button" className="back-link" onClick={onBack}>
+        <ArrowLeft size={16} /> Voltar
+      </button>
+
+      <div className="detail-grid">
+        {/* media */}
+        <div
+          className="detail-media"
+          onMouseDown={onSwipeStart}
+          onMouseUp={onSwipeEnd}
+          onTouchStart={onSwipeStart}
+          onTouchEnd={onSwipeEnd}
+        >
+          {images.length > 0 ? (
+            <img ref={imgRef} src={images[imgIndex]} alt={product.name} draggable={false} />
+          ) : (
+            <div className="detail-placeholder"><ShoppingBag size={88} /></div>
+          )}
+
+          {images.length > 1 && (
+            <>
+              <button type="button" className="media-arrow media-arrow-prev" onClick={prevImg} aria-label="Imagem anterior" />
+              <button type="button" className="media-arrow media-arrow-next" onClick={nextImg} aria-label="Próxima imagem" />
+              <div className="media-dots">
+                {images.map((_, i) => (
+                  <button key={i} type="button" className={`dot${i === imgIndex ? " active" : ""}`} onClick={() => setImgIndex(i)} aria-label={`Imagem ${i + 1}`} />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* info */}
+        <div className="detail-info">
+          <div className="detail-title-row">
+            <h1 className="detail-title">{product.name}</h1>
+            <button type="button" className="share-btn" onClick={handleShare} aria-label="Compartilhar">
+              <Share2 size={17} />
+            </button>
+          </div>
+
+          <div className="detail-price">{fmt(product.priceCents)}</div>
+
+          <ProductSelectors product={product} sel={sel} onChange={set} />
+
+          <div className="detail-actions">
+            <button
+              type="button"
+              className={`btn btn-block${added ? " btn-added" : " btn-primary"}`}
+              onClick={handleAdd}
+            >
+              {added
+                ? <><Check size={17} /> Adicionado</>
+                : <><ShoppingCart size={17} /> Adicionar ao carrinho</>}
+            </button>
+
+            <button type="button" className="btn btn-buy-now btn-block" onClick={handleBuyNow}>
+              <Zap size={16} /> Comprar agora
+            </button>
+          </div>
+
+          <div className="pay-badges">
+            <span><Lock size={12} /> Pagamento seguro</span>
+            <span><QrCode size={12} /> Pix</span>
+            <span><CreditCard size={12} /> Cartão</span>
+          </div>
+
+          <div className="detail-desc">
+            <h3>Descrição</h3>
+            <p>{MATERIAL_MAP[cat]}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function buildInitialSel(product) {
+  if (product.kind === "sizedVariants") return { size: "M" };
+  if (product.kind === "doubleHoodie") return { verde: "M", bege: "M" };
+  if (product.kind === "modelQuantity")
+    return { model: product.models[0].code };
+  if (product.kind === "configuredBundle") {
+    return {
+      variant: product.variants[0].code,
+      size: "M",
+      backpack: product.hasBackpack ? product.models[0].code : null,
+    };
+  }
+  return {};
+}
+
+function ProductSelectors({ product, sel, onChange }) {
   if (product.kind === "sizedVariants") {
-    return product.variants.reduce((t, v) =>
-      t + product.sizes.reduce((s, sz) => s + norm(selection.variants?.[v.code]?.[sz]), 0), 0);
+    return (
+      <div className="field-group">
+        <span className="group-label">Tamanho</span>
+        <SizePills
+          sizes={product.sizes}
+          value={sel.size}
+          onChange={(v) => onChange("size", v)}
+        />
+      </div>
+    );
   }
+
+  if (product.kind === "doubleHoodie") {
+    const verde = product.variants?.find((v) => v.code === "verde");
+    const bege = product.variants?.find((v) => v.code === "bege");
+    return (
+      <div className="field-group">
+        <span className="group-label">Tamanhos</span>
+        <div className="kit-sizes">
+          {verde && (
+            <div className="kit-size-block">
+              <span className="kit-size-head">
+                <span
+                  className="color-swatch"
+                  style={{ background: verde.swatch }}
+                />
+                {verde.name}
+              </span>
+              <SizePills
+                sizes={product.sizes}
+                value={sel.verde}
+                onChange={(v) => onChange("verde", v)}
+              />
+            </div>
+          )}
+          {bege && (
+            <div className="kit-size-block">
+              <span className="kit-size-head">
+                <span
+                  className="color-swatch"
+                  style={{ background: bege.swatch }}
+                />
+                {bege.name}
+              </span>
+              <SizePills
+                sizes={product.sizes}
+                value={sel.bege}
+                onChange={(v) => onChange("bege", v)}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (product.kind === "modelQuantity") {
-    return product.models.reduce((t, m) => t + norm(selection.models?.[m.code]), 0);
+    return (
+      <div className="field-group">
+        <span className="group-label">Modelo</span>
+        <div className="pill-row">
+          {product.models.map((m) => (
+            <button
+              key={m.code}
+              type="button"
+              className={`variant-pill${sel.model === m.code ? " active" : ""}`}
+              onClick={() => onChange("model", m.code)}
+            >
+              {m.name}
+              {sel.model === m.code && <Check size={13} />}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
   }
-  return norm(selection.quantity);
+
+  if (product.kind === "configuredBundle") {
+    return (
+      <>
+        <div className="field-group">
+          <span className="group-label">Cor do moletom</span>
+          <div className="pill-row">
+            {product.variants.map((v) => (
+              <button
+                key={v.code}
+                type="button"
+                className={`variant-pill${sel.variant === v.code ? " active" : ""}`}
+                onClick={() => onChange("variant", v.code)}
+              >
+                <span
+                  className="color-swatch"
+                  style={{ background: v.swatch }}
+                />
+                {v.name}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="field-group">
+          <span className="group-label">Tamanho</span>
+          <SizePills
+            sizes={product.sizes}
+            value={sel.size}
+            onChange={(v) => onChange("size", v)}
+          />
+        </div>
+        {product.hasBackpack && (
+          <div className="field-group">
+            <span className="group-label">Modelo de mochila</span>
+            <div className="pill-row">
+              {product.models.map((m) => (
+                <button
+                  key={m.code}
+                  type="button"
+                  className={`variant-pill${sel.backpack === m.code ? " active" : ""}`}
+                  onClick={() => onChange("backpack", m.code)}
+                >
+                  {m.name}
+                  {sel.backpack === m.code && <Check size={13} />}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  return null;
 }
 
-
-
-function getProductQty(product, order) {
-  return order.lines
-    .filter((l) => l.productId === product.id)
-    .reduce((t, l) => t + l.quantity, 0);
+function SizePills({ sizes, value, onChange }) {
+  return (
+    <div className="pill-row">
+      {sizes.map((s) => (
+        <button
+          key={s}
+          type="button"
+          className={`size-pill${value === s ? " active" : ""}`}
+          onClick={() => onChange(s)}
+        >
+          {s}
+        </button>
+      ))}
+    </div>
+  );
 }
 
-function isMercadoPagoPublicKeyConfigured(value) {
-  const key = String(value || "").trim();
+/* ══════════════════════════════════════════════════════
+   CART VIEW
+══════════════════════════════════════════════════════ */
+function CartView({ cart, onQty, onRemove, onShop, onCheckout, className }) {
+  const t = cartTotals(cart);
 
-  if (!key) {
-    return false;
+  return (
+    <div className={`page content-pad ${className || ""}`}>
+      <h1 className="page-title">Carrinho</h1>
+
+      {cart.length === 0 ? (
+        <div className="panel cart-empty-panel">
+          <ShoppingCart
+            size={42}
+            style={{
+              display: "block",
+              margin: "0 auto 14px",
+              opacity: 0.3,
+              color: "var(--muted)",
+            }}
+          />
+          <p>Seu carrinho está vazio</p>
+          <div style={{ marginTop: 18 }}>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={onShop}
+            >
+              Ver produtos
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="cart-layout">
+          <div className="panel cart-items-panel">
+            {cart.map((item) => (
+              <CartItem
+                key={item.key}
+                item={item}
+                onQty={onQty}
+                onRemove={onRemove}
+              />
+            ))}
+          </div>
+
+          <aside className="panel summary">
+            <h2>Resumo</h2>
+            <div className="summary-rows">
+              <div className="summary-row">
+                <span>Subtotal</span>
+                <strong>{fmt(t.subtotal)}</strong>
+              </div>
+              <div className="summary-row">
+                <span>Frete</span>
+                <strong>{fmt(t.frete)}</strong>
+              </div>
+            </div>
+            <div className="summary-divider" />
+            <div className="summary-total">
+              <span className="lbl">Total</span>
+              <span className="val">{fmt(t.total)}</span>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary btn-block"
+              onClick={onCheckout}
+            >
+              Finalizar Compra
+            </button>
+          </aside>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CartItem({ item, onQty, onRemove }) {
+  return (
+    <div className="cart-item">
+      <div className="cart-thumb">
+        {item.image ? (
+          <img src={item.image} alt={item.name} />
+        ) : (
+          <div className="cart-thumb-ph">
+            <PackageCheck size={26} />
+          </div>
+        )}
+      </div>
+
+      <div className="cart-item-info">
+        <span className="cart-item-name">{item.name}</span>
+        {item.meta && <span className="cart-item-meta">{item.meta}</span>}
+        <Stepper
+          qty={item.qty}
+          onDec={() => onQty(item.key, -1)}
+          onInc={() => onQty(item.key, 1)}
+        />
+      </div>
+
+      <div className="cart-item-right">
+        <button
+          type="button"
+          className="cart-remove"
+          onClick={() => onRemove(item.key)}
+          aria-label="Remover"
+        >
+          <X size={17} />
+        </button>
+        <span className="cart-item-price">
+          {fmt(item.unitCents * item.qty)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function Stepper({ qty, onDec, onInc }) {
+  return (
+    <div className="stepper">
+      <button type="button" aria-label="Diminuir" onClick={onDec}>
+        <Minus size={13} />
+      </button>
+      <span>{qty}</span>
+      <button type="button" aria-label="Aumentar" onClick={onInc}>
+        <Plus size={13} />
+      </button>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   CHECKOUT VIEW
+   Form: Nome, Sobrenome, E-mail, Telefone
+══════════════════════════════════════════════════════ */
+function CheckoutView({ cart, onBack, onResult, className }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({
+    nome: "",
+    sobrenome: "",
+    email: "",
+    telefone: "",
+  });
+
+  const t = cartTotals(cart);
+
+  const customer = useMemo(
+    () => ({
+      name: `${form.nome} ${form.sobrenome}`.trim(),
+      phone: form.telefone,
+      email: form.email,
+    }),
+    [form],
+  );
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  async function handleCheckout() {
+    setError("");
+    setLoading(true);
+    try {
+      const selection = cartToSelection(cart);
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer, selection }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao gerar link de pagamento.");
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        onResult(data);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  return !key.includes("SEU_PUBLIC_KEY");
+  const CRUMBS = ["Carrinho", "Informações", "Pagamento", "Confirmação"];
+
+  return (
+    <div className={`page content-pad ${className || ""}`}>
+      {/* breadcrumb */}
+      <nav className="breadcrumb" aria-label="Etapas">
+        {CRUMBS.map((s, i) => (
+          <span
+            key={s}
+            style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
+          >
+            {i > 0 && <ChevronRight size={13} style={{ opacity: 0.4 }} />}
+            <span className={i === 1 ? "crumb-active" : ""}>{s}</span>
+          </span>
+        ))}
+      </nav>
+
+      <div className="checkout-grid">
+        {/* contact info */}
+        <section className="panel form-panel">
+          <h2>Informações de Contato</h2>
+          <div className="form-stack">
+            <div className="row-2">
+              <input
+                className="input"
+                placeholder="Nome"
+                value={form.nome}
+                onChange={(e) => set("nome", e.target.value)}
+                autoComplete="given-name"
+              />
+              <input
+                className="input"
+                placeholder="Sobrenome"
+                value={form.sobrenome}
+                onChange={(e) => set("sobrenome", e.target.value)}
+                autoComplete="family-name"
+              />
+            </div>
+            <input
+              className="input"
+              placeholder="E-mail"
+              value={form.email}
+              onChange={(e) => set("email", e.target.value)}
+              inputMode="email"
+              autoComplete="email"
+            />
+            <input
+              className="input"
+              placeholder="Telefone"
+              value={form.telefone}
+              onChange={(e) => set("telefone", e.target.value)}
+              inputMode="tel"
+              autoComplete="tel"
+            />
+          </div>
+        </section>
+
+        {/* payment */}
+        <section className="panel form-panel">
+          <h2>Pagamento</h2>
+
+          {error && (
+            <div className="messages">
+              <span>{error}</span>
+            </div>
+          )}
+
+          <p style={{ color: "var(--text-dim)", fontSize: "0.88rem", lineHeight: 1.6, margin: "0 0 16px" }}>
+            Você será redirecionado para a página de pagamento seguro da InfinitePay (Pix, cartão de crédito e débito).
+          </p>
+
+          <div className="pay-badges" style={{ marginBottom: 20 }}>
+            <span><Lock size={12} /> Pagamento seguro</span>
+            <span><QrCode size={12} /> Pix</span>
+            <span><CreditCard size={12} /> Cartão</span>
+          </div>
+
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            onClick={handleCheckout}
+            disabled={loading}
+          >
+            {loading ? "Aguarde..." : <><Zap size={16} /> Ir para pagamento — {fmt(t.total)}</>}
+          </button>
+
+          <button
+            type="button"
+            className="btn btn-ghost btn-block"
+            onClick={onBack}
+          >
+            Voltar ao carrinho
+          </button>
+        </section>
+
+        {/* summary sidebar */}
+        <aside className="panel summary checkout-summary">
+          <h2>Resumo</h2>
+          <div className="summary-mini">
+            {cart.map((item) => (
+              <div className="summary-mini-item" key={item.key}>
+                <div className="summary-mini-thumb">
+                  {item.image ? (
+                    <img src={item.image} alt={item.name} />
+                  ) : (
+                    <div className="summary-mini-ph">
+                      <PackageCheck size={18} />
+                    </div>
+                  )}
+                </div>
+                <div className="summary-mini-info">
+                  <div className="nm">{item.name}</div>
+                  <div className="px">{fmt(item.unitCents)}</div>
+                </div>
+                <span className="summary-mini-qty">x{item.qty}</span>
+              </div>
+            ))}
+          </div>
+          <div className="summary-divider" />
+          <div className="summary-rows">
+            <div className="summary-row">
+              <span>Subtotal</span>
+              <strong>{fmt(t.subtotal)}</strong>
+            </div>
+            <div className="summary-row">
+              <span>Frete</span>
+              <strong>{fmt(t.frete)}</strong>
+            </div>
+          </div>
+          <div className="summary-divider" />
+          <div className="summary-total">
+            <span className="lbl">Total</span>
+            <span className="val">{fmt(t.total)}</span>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   CONFIRMATION VIEW
+══════════════════════════════════════════════════════ */
+function ConfirmationView({ result, onNew, className }) {
+  const payment = result?.payment || {};
+  const pixData = payment.point_of_interaction?.transaction_data || {};
+  const copy = getStatusCopy(payment.status);
+  const total = result?.order?.totalAmount || 0;
+
+  return (
+    <div className={`page content-pad ${className || ""}`}>
+      <div className="panel confirm-panel">
+        <div className="confirm-icon">
+          <CheckCircle2 size={32} />
+        </div>
+
+        {result?.orderId && (
+          <span className="confirm-eyebrow">Pedido #{result.orderId}</span>
+        )}
+
+        <h1>{copy.title}</h1>
+        <p>{copy.desc}</p>
+        <p className="confirm-total">
+          Total: <span>{currency.format(total)}</span>
+        </p>
+
+        {pixData.qr_code_base64 && (
+          <img
+            className="pix-image"
+            src={`data:image/png;base64,${pixData.qr_code_base64}`}
+            alt="QR Code Pix"
+          />
+        )}
+
+        {pixData.qr_code && (
+          <div className="pix-copy" style={{ maxWidth: 460 }}>
+            <textarea
+              value={pixData.qr_code}
+              readOnly
+              aria-label="Código Pix"
+            />
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => navigator.clipboard?.writeText(pixData.qr_code)}
+            >
+              <Copy size={14} /> Copiar código Pix
+            </button>
+          </div>
+        )}
+
+        {pixData.ticket_url && (
+          <a
+            className="ticket-link"
+            href={pixData.ticket_url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Abrir instrução de pagamento
+          </a>
+        )}
+
+        <div className="confirm-actions">
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={onNew}
+          >
+            <PackageCheck size={16} /> Novo pedido
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
