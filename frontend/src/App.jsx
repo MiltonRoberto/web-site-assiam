@@ -30,8 +30,6 @@ const currency = new Intl.NumberFormat("pt-BR", {
 });
 const fmt = (cents) => currency.format(cents / 100);
 
-const FRETE_CENTS = 2000;
-
 const BANNER_SLIDES = [
   { src: "/imgs/anuncio.png", alt: "AASIAM – Nova Coleção" },
   { src: "/imgs/combo-alcateia.png", alt: "Combo Alcateia" },
@@ -70,8 +68,7 @@ function normalizeQty(v) {
 
 function cartTotals(cart) {
   const subtotal = cart.reduce((t, i) => t + i.unitCents * i.qty, 0);
-  const frete = cart.length > 0 ? FRETE_CENTS : 0;
-  return { subtotal, frete, total: subtotal + frete };
+  return { subtotal, total: subtotal };
 }
 
 function cartToSelection(cart) {
@@ -994,10 +991,6 @@ function CartView({ cart, onQty, onRemove, onShop, onCheckout, className }) {
                 <span>Subtotal</span>
                 <strong>{fmt(t.subtotal)}</strong>
               </div>
-              <div className="summary-row">
-                <span>Frete</span>
-                <strong>{fmt(t.frete)}</strong>
-              </div>
             </div>
             <div className="summary-divider" />
             <div className="summary-total">
@@ -1246,10 +1239,6 @@ function CheckoutView({ cart, onBack, onResult, className }) {
             <div className="summary-row">
               <span>Subtotal</span>
               <strong>{fmt(t.subtotal)}</strong>
-            </div>
-            <div className="summary-row">
-              <span>Frete</span>
-              <strong>{fmt(t.frete)}</strong>
             </div>
           </div>
           <div className="summary-divider" />
