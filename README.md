@@ -23,7 +23,13 @@ Abra `http://localhost:5173`.
 1. Crie uma service account no Google Cloud.
 2. Ative a Google Sheets API.
 3. Compartilhe a planilha com o e-mail da service account.
-4. Preencha no `.env`:
+4. Pegue o ID da planilha pela URL. Exemplo:
+
+```text
+https://docs.google.com/spreadsheets/d/ESTE_E_O_ID/edit#gid=0
+```
+
+5. Preencha no `.env`:
 
 ```bash
 GOOGLE_SHEETS_SPREADSHEET_ID=
@@ -32,11 +38,20 @@ GOOGLE_SERVICE_ACCOUNT_EMAIL=
 GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 ```
 
-Crie uma aba chamada `Pedidos` com estes cabecalhos:
+O servidor cria a aba `Pedidos` automaticamente se ela nao existir e inicializa estes cabecalhos:
 
 ```text
-Data, Evento, Pedido, Nome, Telefone, Email, Curso, Entrega, Total, Quantidade, Itens, Pagamento, Status, Detalhe, Metodo, Tipo, Observacoes
+Data/Hora, Evento, ID Pedido, Nome, Telefone, Email, Curso, Entrega, Total, Quantidade, Itens, Pagamento, Status, Detalhe, Metodo, Tipo, Observacoes
 ```
+
+Se preferir evitar problemas com quebras de linha na chave privada, use `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_BASE64`.
+
+## Validar integracao com a planilha
+
+1. Inicie a aplicacao com `npm run dev`.
+2. Abra [http://localhost:3333/api/health](http://localhost:3333/api/health).
+3. Confirme que `googleSheetsConfigured` aparece como `true`.
+4. Gere um pedido teste para verificar se uma nova linha foi adicionada na planilha.
 
 ## Precos e produtos
 

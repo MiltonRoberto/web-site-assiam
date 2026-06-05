@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { google } from "googleapis";
 import { calculateOrder, sanitizeSelection } from "../shared/order.js";
+import { criarLinkPagamento, verificarPagamento } from "./infinitepay.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,27 +13,43 @@ const rootDir = path.resolve(__dirname, "..");
 
 const app = express();
 const port = process.env.PORT || 3333;
-const mercadoPagoAccessToken = process.env.MP_ACCESS_TOKEN;
+const defaultGoogleSheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || "Pedidos";
+
+const SHEET_HEADERS = [
+  "Data/Hora",
+  "Evento",
+  "ID Pedido",
+  "Nome",
+  "Telefone",
+  "Itens",
+  "Tamanho",
+  "Quantidade",
+  "Total",
+  "Pagamento",
+  "Status",
+  "Detalhe",
+  "Observacoes"
+];
 
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
-    mercadoPagoConfigured: Boolean(mercadoPagoAccessToken),
+    infinitePayConfigured: Boolean(process.env.INFINITEPAY_HANDLE),
     googleSheetsConfigured: isGoogleSheetsConfigured()
   });
 });
 
 app.get("/api/config", (_req, res) => {
   res.json({
-    mercadoPagoConfigured: Boolean(mercadoPagoAccessToken),
+    infinitePayConfigured: Boolean(process.env.INFINITEPAY_HANDLE),
     googleSheetsConfigured: isGoogleSheetsConfigured(),
-    googleSheetName: process.env.GOOGLE_SHEETS_SHEET_NAME || "Pedidos"
+    googleSheetName: defaultGoogleSheetName
   });
 });
 
-app.post("/api/payments", async (req, res) => {
+app.post("/api/checkout", async (req, res) => {
   try {
     const orderId = createOrderId();
     const customer = sanitizeCustomer(req.body?.customer);
@@ -43,82 +60,67 @@ app.post("/api/payments", async (req, res) => {
       return res.status(400).json({ error: "Selecione pelo menos um produto." });
     }
 
-    if (!customer.name || !customer.phone || !customer.email) {
+    if (!customer.name || !customer.phone) {
       return res.status(400).json({
-        error: "Nome, telefone e e-mail sao obrigatorios para finalizar o pedido."
+        error: "Nome e telefone sao obrigatorios para finalizar o pedido."
       });
     }
 
-    const paymentRequest = buildMercadoPagoPaymentRequest({
+    const items = order.lines.map((line) => ({
+      quantity: line.quantity,
+      price: line.unitPriceCents,
+      description: line.variant
+        ? `${line.productName} - ${line.variant}`
+        : line.productName
+    }));
+
+    const { url } = await criarLinkPagamento({
       orderId,
-      order,
+      items,
+      cliente: {
+        nome: customer.name,
+        telefone: customer.phone,
+        email: customer.email || undefined
+      }
+    });
+
+    await appendOrderToSheet({
+      event: "Novo pedido",
+      orderId,
       customer,
-      payment: req.body?.payment
-    });
-
-    const payment = mercadoPagoAccessToken
-      ? await createMercadoPagoPayment(paymentRequest, orderId)
-      : createSimulatedPayment(paymentRequest, orderId);
-
-    const sheetResult = await appendOrderToSheet({
-      eventType: "pedido_criado",
-      orderId,
-      customer,
       order,
-      payment
+      status: "pending"
     });
 
-    res.status(201).json({
-      orderId,
-      order,
-      payment,
-      sheet: sheetResult,
-      mode: mercadoPagoAccessToken ? "mercado_pago" : "simulado"
-    });
+    res.status(201).json({ orderId, url, order });
   } catch (error) {
-    console.error("Erro ao criar pagamento", error);
+    console.error("Erro ao criar checkout", error);
     res.status(error.status || 500).json({
-      error: error.message || "Nao foi possivel criar o pagamento."
+      error: error.message || "Nao foi possivel criar o link de pagamento."
     });
   }
 });
 
-app.post("/api/webhooks/mercado-pago", async (req, res) => {
+app.post("/api/webhooks/infinitepay", async (req, res) => {
   try {
-    const paymentId =
-      req.body?.data?.id ||
-      req.body?.id ||
-      req.query?.["data.id"] ||
-      req.query?.id;
+    const { order_nsu: orderId, status, transaction_nsu, invoice_slug } = req.body || {};
 
-    if (!paymentId || !mercadoPagoAccessToken) {
+    if (!orderId) {
       return res.sendStatus(200);
     }
 
-    const payment = await getMercadoPagoPayment(paymentId);
-
     await appendOrderToSheet({
-      eventType: "status_pagamento",
-      orderId: payment.external_reference || "",
-      customer: {
-        name: payment.metadata?.customer_name || "",
-        phone: payment.metadata?.customer_phone || "",
-        email: payment.payer?.email || "",
-        course: "",
-        notes: ""
-      },
-      order: {
-        lines: [],
-        totalAmount: payment.transaction_amount || 0,
-        totalCents: Math.round((payment.transaction_amount || 0) * 100),
-        totalQuantity: 0
-      },
-      payment
+      event: "Atualizacao webhook",
+      orderId,
+      customer: { name: "", phone: "" },
+      order: { lines: [], totalAmount: 0, totalCents: 0, totalQuantity: 0 },
+      status: status || "unknown",
+      detail: `transaction_nsu: ${transaction_nsu || ""}, slug: ${invoice_slug || ""}`
     });
 
     res.sendStatus(200);
   } catch (error) {
-    console.error("Erro no webhook do Mercado Pago", error);
+    console.error("Erro no webhook InfinitePay", error);
     res.sendStatus(200);
   }
 });
@@ -139,166 +141,104 @@ function sanitizeCustomer(customer = {}) {
     name: cleanText(customer.name, 120),
     phone: cleanText(customer.phone, 30),
     email: cleanText(customer.email, 120).toLowerCase(),
-    course: cleanText(customer.course, 120),
-    delivery: cleanText(customer.delivery, 120),
     notes: cleanText(customer.notes, 500)
   };
 }
 
-function buildMercadoPagoPaymentRequest({ orderId, order, customer, payment }) {
-  const formData = payment?.formData || {};
-  const selectedPaymentMethod = payment?.selectedPaymentMethod || "";
-  const payer = formData.payer || {};
-  const paymentMethodId =
-    formData.payment_method_id ||
-    (selectedPaymentMethod === "bank_transfer" ? "pix" : selectedPaymentMethod) ||
-    "pix";
-
-  const request = {
-    transaction_amount: order.totalAmount,
-    description: buildPaymentDescription(order.lines),
-    external_reference: orderId,
-    statement_descriptor: "AASIAM",
-    payment_method_id: paymentMethodId,
-    metadata: {
-      order_id: orderId,
-      customer_name: customer.name,
-      customer_phone: customer.phone,
-      customer_course: customer.course,
-      customer_delivery: customer.delivery,
-      items: order.lines.map((line) => ({
-        product_id: line.productId,
-        name: line.productName,
-        variant: line.variant,
-        quantity: line.quantity,
-        unit_price: line.unitPriceCents / 100
-      }))
-    },
-    payer: {
-      email: payer.email || customer.email,
-      first_name: customer.name.split(" ")[0] || customer.name
-    },
-    additional_info: {
-      items: order.lines.map((line) => ({
-        id: line.productId,
-        title: line.variant ? `${line.productName} - ${line.variant}` : line.productName,
-        quantity: line.quantity,
-        unit_price: line.unitPriceCents / 100
-      }))
-    }
-  };
-
-  copyOptional(request, "token", formData.token);
-  copyOptional(request, "installments", formData.installments);
-  copyOptional(request, "issuer_id", formData.issuer_id);
-
-  if (payer.identification?.number) {
-    request.payer.identification = {
-      type: payer.identification.type || "CPF",
-      number: payer.identification.number
-    };
-  }
-
-  return request;
-}
-
-async function createMercadoPagoPayment(paymentRequest, orderId) {
-  const response = await fetch("https://api.mercadopago.com/v1/payments", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${mercadoPagoAccessToken}`,
-      "Content-Type": "application/json",
-      "X-Idempotency-Key": orderId
-    },
-    body: JSON.stringify(paymentRequest)
-  });
-
-  const body = await response.json();
-
-  if (!response.ok) {
-    const message =
-      body?.message ||
-      body?.error ||
-      "O Mercado Pago recusou a criacao do pagamento.";
-    const error = new Error(message);
-    error.status = response.status;
-    throw error;
-  }
-
-  return body;
-}
-
-async function getMercadoPagoPayment(paymentId) {
-  const response = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
-    headers: {
-      Authorization: `Bearer ${mercadoPagoAccessToken}`
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Pagamento ${paymentId} nao encontrado no Mercado Pago.`);
-  }
-
-  return response.json();
-}
-
-function createSimulatedPayment(paymentRequest, orderId) {
-  return {
-    id: `SIM-${orderId}`,
-    status: "simulated",
-    status_detail: "missing_mercado_pago_credentials",
-    payment_method_id: paymentRequest.payment_method_id,
-    payment_type_id: paymentRequest.payment_method_id === "pix" ? "bank_transfer" : "credit_card",
-    transaction_amount: paymentRequest.transaction_amount,
-    external_reference: orderId,
-    payer: paymentRequest.payer,
-    point_of_interaction: {
-      transaction_data: {
-        qr_code: "PIX-SIMULADO-CONFIGURE-MP_ACCESS_TOKEN-PARA-GERAR-COBRANCA-REAL"
-      }
-    }
-  };
-}
-
-async function appendOrderToSheet({ eventType, orderId, customer, order, payment }) {
+async function appendOrderToSheet({ event = "Novo pedido", orderId, customer, order, status = "", detail = "" }) {
   if (!isGoogleSheetsConfigured()) {
     return { enabled: false, status: "not_configured" };
   }
 
   const auth = createGoogleAuth();
   const sheets = google.sheets({ version: "v4", auth });
-  const sheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || "Pedidos";
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  const sheetName = defaultGoogleSheetName;
 
-  const values = [
-    [
-      new Date().toISOString(),
-      eventType,
-      orderId,
-      customer.name,
-      customer.phone,
-      customer.email,
-      customer.course,
-      customer.delivery,
-      order.totalAmount,
-      order.totalQuantity,
-      order.lines.map(formatLineForSheet).join(" | "),
-      payment.id || "",
-      payment.status || "",
-      payment.status_detail || "",
-      payment.payment_method_id || "",
-      payment.payment_type_id || "",
-      customer.notes
-    ]
+  await ensureSheetExists(sheets, spreadsheetId, sheetName);
+  await ensureSheetHeader(sheets, spreadsheetId, sheetName);
+
+  const itemSummary = summarizeOrderLines(order.lines || []);
+  const statusLabel = resolvePaymentStatus(status);
+
+  const row = [
+    formatDateTime(),
+    event,
+    orderId,
+    customer.name,
+    customer.phone,
+    itemSummary.items,
+    itemSummary.sizes,
+    order.totalQuantity || "",
+    order.totalAmount || "",
+    "InfinitePay",
+    statusLabel,
+    detail,
+    customer.notes || ""
   ];
 
   await sheets.spreadsheets.values.append({
-    spreadsheetId: process.env.GOOGLE_SHEETS_SPREADSHEET_ID,
-    range: `${quoteSheetName(sheetName)}!A:Q`,
+    spreadsheetId,
+    range: `${quoteSheetName(sheetName)}!A:M`,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values }
+    requestBody: { values: [row] }
   });
 
   return { enabled: true, status: "appended", sheetName };
+}
+
+async function ensureSheetExists(sheets, spreadsheetId, sheetName) {
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets.properties.title"
+  });
+
+  const hasSheet = spreadsheet.data.sheets?.some(
+    (sheet) => sheet.properties?.title === sheetName
+  );
+
+  if (hasSheet) return;
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{ addSheet: { properties: { title: sheetName } } }]
+    }
+  });
+}
+
+async function ensureSheetHeader(sheets, spreadsheetId, sheetName) {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${quoteSheetName(sheetName)}!A1`
+  });
+
+  if (res.data.values?.length) return;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${quoteSheetName(sheetName)}!A1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [SHEET_HEADERS] }
+  });
+}
+
+function resolvePaymentStatus(status) {
+  const map = {
+    approved: "Aprovado",
+    paid: "Pago",
+    pending: "Pendente",
+    in_process: "Em análise",
+    rejected: "Recusado",
+    cancelled: "Cancelado",
+    refunded: "Reembolsado",
+    unknown: "—"
+  };
+  return map[status] || status || "—";
+}
+
+function formatDateTime() {
+  return new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
 }
 
 function createGoogleAuth() {
@@ -316,7 +256,6 @@ function getGooglePrivateKey() {
       "base64"
     ).toString("utf8");
   }
-
   return process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
 }
 
@@ -329,21 +268,19 @@ function isGoogleSheetsConfigured() {
   );
 }
 
-function buildPaymentDescription(lines) {
-  const description = `Pedido AASIAM: ${lines
-    .map((line) =>
-      line.variant
-        ? `${line.productName} ${line.variant} x${line.quantity}`
-        : `${line.productName} x${line.quantity}`
-    )
-    .join(", ")}`;
-
-  return description.slice(0, 255);
+function summarizeOrderLines(lines) {
+  if (!lines.length) return { items: "", sizes: "" };
+  return {
+    items: lines.map((line) => line.productName).join("\n"),
+    sizes: lines.map(formatSizeForSheet).join("\n")
+  };
 }
 
-function formatLineForSheet(line) {
-  const variant = line.variant ? ` (${line.variant})` : "";
-  return `${line.productName}${variant} x${line.quantity}`;
+function formatSizeForSheet(line) {
+  if (!line.variant) return "—";
+  const sizeMatch = line.variant.match(/Tam\.\s*([A-Z0-9]+)/i);
+  if (sizeMatch) return sizeMatch[1];
+  return line.variant;
 }
 
 function cleanText(value, maxLength) {
@@ -351,12 +288,6 @@ function cleanText(value, maxLength) {
     .trim()
     .replace(/\s+/g, " ")
     .slice(0, maxLength);
-}
-
-function copyOptional(target, key, value) {
-  if (value !== undefined && value !== null && value !== "") {
-    target[key] = value;
-  }
 }
 
 function quoteSheetName(sheetName) {

@@ -18,7 +18,6 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { initMercadoPago, Payment } from "@mercadopago/sdk-react";
 import gsap from "gsap";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { PRODUCTS } from "../../shared/products.js";
@@ -1078,8 +1077,7 @@ function Stepper({ qty, onDec, onInc }) {
    Form: Nome, Sobrenome, E-mail, Telefone
 ══════════════════════════════════════════════════════ */
 function CheckoutView({ cart, onBack, onResult, className }) {
-  const [method, setMethod] = useState("card");
-  const [brickReady, setBrick] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({
     nome: "",
@@ -1088,7 +1086,6 @@ function CheckoutView({ cart, onBack, onResult, className }) {
     telefone: "",
   });
 
-  const publicKey = import.meta.env.VITE_MP_PUBLIC_KEY;
   const t = cartTotals(cart);
 
   const customer = useMemo(
@@ -1100,59 +1097,29 @@ function CheckoutView({ cart, onBack, onResult, className }) {
     [form],
   );
 
-  const initialization = useMemo(
-    () => ({ amount: t.total / 100, payer: { email: form.email } }),
-    [t.total, form.email],
-  );
-
-  const customization = useMemo(
-    () => ({
-      visual: { style: { theme: "dark" } },
-      paymentMethods: { creditCard: "all", bankTransfer: "all" },
-    }),
-    [],
-  );
-
-  useEffect(() => {
-    if (publicKey) initMercadoPago(publicKey, { locale: "pt-BR" });
-  }, [publicKey]);
-
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  async function submitPayment(paymentPayload) {
+  async function handleCheckout() {
     setError("");
-    const selection = cartToSelection(cart);
-    const res = await fetch("/api/payments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customer, selection, payment: paymentPayload }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Erro ao registrar pedido.");
-    onResult(data);
-    return data;
-  }
-
-  async function handleMercadoPago({ selectedPaymentMethod, formData }) {
+    setLoading(true);
     try {
-      return await submitPayment({ selectedPaymentMethod, formData });
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
-  }
-
-  async function handleSimulated() {
-    try {
-      await submitPayment({
-        selectedPaymentMethod: method,
-        formData: {
-          payment_method_id: method,
-          payer: { email: customer.email },
-        },
+      const selection = cartToSelection(cart);
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer, selection }),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao gerar link de pagamento.");
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        onResult(data);
+      }
     } catch (err) {
       setError(err.message);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1215,7 +1182,7 @@ function CheckoutView({ cart, onBack, onResult, className }) {
 
         {/* payment */}
         <section className="panel form-panel">
-          <h2>Método de Pagamento</h2>
+          <h2>Pagamento</h2>
 
           {error && (
             <div className="messages">
@@ -1223,102 +1190,24 @@ function CheckoutView({ cart, onBack, onResult, className }) {
             </div>
           )}
 
-          {publicKey ? (
-            <div style={{ minHeight: 200 }}>
-              {!brickReady && (
-                <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
-                  Carregando Mercado Pago...
-                </p>
-              )}
-              <Payment
-                key={t.total}
-                initialization={initialization}
-                customization={customization}
-                onSubmit={handleMercadoPago}
-                onReady={() => setBrick(true)}
-                onError={(e) => setError(e?.message || "Erro no Mercado Pago.")}
-              />
-            </div>
-          ) : (
-            <>
-              <div className="pay-methods">
-                <button
-                  type="button"
-                  className={`pay-option${method === "card" ? " active" : ""}`}
-                  onClick={() => setMethod("card")}
-                >
-                  <span className="pay-radio">
-                    {method === "card" && <span className="pay-radio-dot" />}
-                  </span>
-                  Cartão de Crédito
-                  <span className="pay-icon">
-                    <CreditCard size={17} />
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className={`pay-option${method === "pix" ? " active" : ""}`}
-                  onClick={() => setMethod("pix")}
-                >
-                  <span className="pay-radio">
-                    {method === "pix" && <span className="pay-radio-dot" />}
-                  </span>
-                  Pix
-                  <span className="pay-icon">
-                    <QrCode size={17} />
-                  </span>
-                </button>
-              </div>
+          <p style={{ color: "var(--text-dim)", fontSize: "0.88rem", lineHeight: 1.6, margin: "0 0 16px" }}>
+            Você será redirecionado para a página de pagamento seguro da InfinitePay (Pix, cartão de crédito e débito).
+          </p>
 
-              {method === "card" && (
-                <div className="form-stack">
-                  <input
-                    className="input"
-                    placeholder="Número do cartão"
-                    inputMode="numeric"
-                  />
-                  <input className="input" placeholder="Nome no cartão" />
-                  <div className="row-2">
-                    <input className="input" placeholder="Validade MM/AA" />
-                    <input
-                      className="input"
-                      placeholder="CVV"
-                      inputMode="numeric"
-                    />
-                  </div>
-                </div>
-              )}
+          <div className="pay-badges" style={{ marginBottom: 20 }}>
+            <span><Lock size={12} /> Pagamento seguro</span>
+            <span><QrCode size={12} /> Pix</span>
+            <span><CreditCard size={12} /> Cartão</span>
+          </div>
 
-              {method === "pix" && (
-                <p
-                  style={{
-                    color: "var(--text-dim)",
-                    fontSize: "0.88rem",
-                    lineHeight: 1.6,
-                    margin: 0,
-                  }}
-                >
-                  Ao confirmar, geramos um QR Code Pix para pagamento imediato.
-                </p>
-              )}
-
-              <button
-                type="button"
-                className="btn btn-primary btn-block"
-                onClick={handleSimulated}
-              >
-                {method === "pix" ? (
-                  <>
-                    <QrCode size={16} /> Gerar Pix
-                  </>
-                ) : (
-                  <>
-                    <CreditCard size={16} /> Pagar {fmt(t.total)}
-                  </>
-                )}
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            onClick={handleCheckout}
+            disabled={loading}
+          >
+            {loading ? "Aguarde..." : <><Zap size={16} /> Ir para pagamento — {fmt(t.total)}</>}
+          </button>
 
           <button
             type="button"
