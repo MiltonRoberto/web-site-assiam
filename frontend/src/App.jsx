@@ -358,6 +358,11 @@ export default function App() {
           )}
         </AnimatedPage>
       </main>
+
+      <footer className="site-footer-copy">
+        <p>© 2025 AASIAM. Todos os direitos reservados.</p>
+        <p>Desenvolvido por Arthur Zanon, Milton Roberto e Marcelo Telles.</p>
+      </footer>
     </div>
   );
 }
