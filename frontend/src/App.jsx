@@ -1110,7 +1110,8 @@ function CheckoutView({ cart, onBack, onResult, className }) {
         onResult(data);
       }
     } catch (err) {
-      setError(err.message);
+      console.error("Erro no checkout:", err);
+      setError("Não foi possível processar o pagamento. Tente novamente ou entre em contato com o suporte.");
     } finally {
       setLoading(false);
     }
