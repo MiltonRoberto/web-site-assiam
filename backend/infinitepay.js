@@ -66,11 +66,21 @@ export async function criarLinkPagamento({ orderId, items, cliente }) {
   const appUrl = (process.env.APP_URL || "http://localhost:5173").replace(/\/$/, "");
   const apiUrl = (process.env.API_URL || "http://localhost:3333").replace(/\/$/, "");
 
+  const webhookUrl = `${apiUrl}/api/webhooks/infinitepay`;
+
+  // Log de diagnóstico — confirma o destino do webhook enviado à InfinitePay
+  console.log("[InfinitePay] webhook_url:", webhookUrl);
+  if (!process.env.API_URL) {
+    console.warn(
+      "[InfinitePay] ⚠ API_URL não está definida — webhook aponta para localhost e a InfinitePay NÃO conseguirá notificar o pagamento em produção. Configure API_URL no Render."
+    );
+  }
+
   const payload = {
     handle,
     order_nsu: orderId,
     redirect_url: `${appUrl}/pagamento-concluido?pedido=${orderId}&status=concluido`,
-    webhook_url: `${apiUrl}/api/webhooks/infinitepay`,
+    webhook_url: webhookUrl,
     items: items.map((item) => ({
       quantity: item.quantity,           // inteiro
       price: item.price,                 // centavos, inteiro
