@@ -1044,10 +1044,13 @@ a { color: inherit; }
 
 .summary-mini-item {
   display: grid;
-  grid-template-columns: 44px 1fr auto;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
 }
+
+.summary-mini-info { min-width: 0; }
+.summary-mini-info .nm { overflow-wrap: anywhere; }
 
 .summary-mini-thumb {
   width: 44px;
@@ -1083,6 +1086,10 @@ a { color: inherit; }
   gap: 20px;
   align-items: start;
 }
+
+/* Permite que os itens do grid encolham abaixo do tamanho intrínseco do conteúdo
+   (evita overflow horizontal no mobile). Inofensivo no desktop. */
+.checkout-grid > * { min-width: 0; }
 
 .form-panel {
   padding: 24px;
@@ -1380,6 +1387,11 @@ a { color: inherit; }
   .row-2 { grid-template-columns: 1fr; }
   .content-pad { padding-top: 16px; padding-bottom: 96px; }
   .confirm-panel { padding: 32px 20px; }
+
+  /* breadcrumb quebra em vez de vazar à direita (iPhone 13 / 390px) */
+  .breadcrumb { flex-wrap: wrap; row-gap: 6px; }
+  /* reduz padding interno dos painéis para sobrar largura no mobile */
+  .form-panel { padding: 20px 16px; }
 }
 
 @media (max-width: 420px) {
