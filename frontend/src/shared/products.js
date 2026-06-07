@@ -95,7 +95,7 @@ export const PRODUCTS = [
 		{
 			id: 'caneca',
 			kind: 'quantity',
-			name: 'Caneca AASIAM',
+			name: 'Caneca + tirante AASIAM',
 			shortName: 'Caneca',
 			description:
 				'Kit exclusivo da AASIAM que reúne uma caneca temática e um tirante personalizado, ideal para representar a Alcateia em qualquer momento.',
@@ -141,16 +141,16 @@ export const PRODUCTS = [
 			images: ['/imgs/camiseta-aasiam.png'],
 		},
 		{
-			id: 'uniforme-oficial-aasiam-2025',
+			id: 'camiseta-goleiro-aasiam',
 			kind: 'quantity',
-			name: 'Camiseta AASIAM 2025',
-			shortName: 'Camiseta 2025',
-			description: 'Camiseta oficial AASIAM 2025.',
+			name: 'Camiseta Goleiro AASIAM 2026',
+			shortName: 'Camiseta Goleiro 2026',
+			description: 'Camiseta oficial de goleiro da Atlética de Sistemas da AMF 2026.',
 			priceCents: 0,
 			tag: 'Esgotado',
 			soldOut: true,
 			accent: '#12c86b',
-			images: ['/imgs/camiseta-offwhite-aasiam.png'],
+			images: ['/imgs/camiseta-aasiam-goleiro.png'],
 		},
 		{
 			id: 'manta',
@@ -158,7 +158,7 @@ export const PRODUCTS = [
 			name: 'Manta AASIAM',
 			shortName: 'Manta',
 			description:
-					'Cachecol oficial da AASIAM, desenvolvido para demonstrar orgulho e pertencimento. Perfeito para eventos, competições e momentos de integração da Atlética.',
+					'Manta oficial da AASIAM, desenvolvido para demonstrar orgulho e pertencimento. Perfeito para eventos, competições e momentos de integração da Atlética.',
 		priceCents: 5000,
 		tag: 'Conforto',
 		accent: '#213a2c',
@@ -170,7 +170,7 @@ export const PRODUCTS = [
 			name: 'Combo Alpha',
 			shortName: 'Combo Completo',
 			description:
-				'O Combo Alpha é a opção mais completa da Coleção Alcateia. Reunindo moletom, caneca, tirante, mochila e cachecol, este kit foi desenvolvido para quem quer carregar a identidade da AASIAM em todos os momentos. Um combo exclusivo que combina utilidade, conforto e pertencimento, ideal para os membros mais engajados da alcateia.',
+				'O Combo Alpha é a opção mais completa da Coleção Alcateia. Reunindo moletom, caneca com tirante, mochila e manta, este kit foi desenvolvido para quem quer carregar a identidade da AASIAM em todos os momentos. Um combo exclusivo que combina utilidade, conforto e pertencimento, ideal para os membros mais engajados da alcateia.',
 		priceCents: 27000,
 		tag: 'Todos os itens',
 		accent: '#18f08a',
