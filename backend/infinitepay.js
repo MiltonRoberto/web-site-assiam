@@ -63,8 +63,8 @@ export async function criarLinkPagamento({ orderId, items, cliente }) {
   const handle = process.env.INFINITEPAY_HANDLE;
   if (!handle) throw new Error("INFINITEPAY_HANDLE não configurado no .env");
 
-  const appUrl = process.env.APP_URL || "http://localhost:5173";
-  const apiUrl = process.env.API_URL || "http://localhost:3333";
+  const appUrl = (process.env.APP_URL || "http://localhost:5173").replace(/\/$/, "");
+  const apiUrl = (process.env.API_URL || "http://localhost:3333").replace(/\/$/, "");
 
   const payload = {
     handle,

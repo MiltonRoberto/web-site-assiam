@@ -41,11 +41,12 @@ const SHEET_HEADERS = [
 ];
 
 /* ─── CORS ─── */
-// Aceita: APP_URL configurado no .env, qualquer subdomínio *.vercel.app e localhost em dev.
+// Aceita: APP_URL do .env (ex: https://loja-aasiam-tkah.vercel.app),
+// qualquer *.vercel.app (preview deploys) e localhost em dev.
 const ALLOWED_ORIGINS = new Set(
   [process.env.APP_URL, "http://localhost:5173", "http://localhost:4173"]
     .filter(Boolean)
-    .map((o) => o.replace(/\/$/, "")) // remove barra final, se houver
+    .map((o) => o.replace(/\/$/, "")) // remove barra final acidental
 );
 
 app.use((req, res, next) => {
@@ -173,23 +174,26 @@ app.get("/api/pedido/:orderId", async (req, res) => {
     }
 
     const paid = paymentData?.paid === true;
-    const status = paymentData?.status ?? (req.query.status === "concluido" ? "pending" : "unknown");
+    const status = paymentData?.status ?? (req.query.status === "concluido" ? "concluido" : "unknown");
 
     const cached = orderCache.get(orderId) || {};
+
+    // capture_method e transaction_id vêm da URL de redirect da InfinitePay como fallback
+    const captureMethod = paymentData?.capture_method ?? req.query.capture_method ?? null;
 
     return res.json({
       orderId,
       verified: paymentData !== null,
       paid,
       status,
-      amount: paymentData?.amount ?? cached.totalCents ?? null,
-      paid_amount: paymentData?.paid_amount ?? null,
-      installments: paymentData?.installments ?? null,
-      capture_method: paymentData?.capture_method ?? null,
-      receipt_url: req.query.receipt_url || null,
-      items: cached.items ?? [],
-      totalCents: cached.totalCents ?? null,
-      customer: cached.customer ?? null,
+      amount:         paymentData?.amount      ?? cached.totalCents ?? null,
+      paid_amount:    paymentData?.paid_amount  ?? null,
+      installments:   paymentData?.installments ?? null,
+      capture_method: captureMethod,
+      receipt_url:    req.query.receipt_url     || null,
+      items:          cached.items    ?? [],
+      totalCents:     cached.totalCents ?? null,
+      customer:       cached.customer  ?? null,
     });
   } catch (err) {
     console.error("Erro em GET /api/pedido:", err);
@@ -270,7 +274,11 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 app.listen(port, () => {
-  console.log(`API AASIAM rodando em http://localhost:${port}`);
+  console.log(`API AASIAM rodando na porta ${port}`);
+  console.log(`CORS origens explícitas: ${[...ALLOWED_ORIGINS].join(", ")} + *.vercel.app`);
+  console.log(`InfinitePay handle: ${process.env.INFINITEPAY_HANDLE || "NÃO CONFIGURADO"}`);
+  console.log(`APP_URL: ${process.env.APP_URL || "não definido (usando fallback localhost)"}`);
+  console.log(`API_URL: ${process.env.API_URL || "não definido (usando fallback localhost)"}`);
 });
 
 function sanitizeCustomer(customer = {}) {
