@@ -37,10 +37,17 @@ const SHEET_HEADERS = [
 ];
 
 /* ─── CORS ─── */
-// Aceita: APP_URL do .env (ex: https://loja-aasiam-tkah.vercel.app),
-// qualquer *.vercel.app (preview deploys) e localhost em dev.
+// Aceita: domínio oficial aasiam.com.br (com e sem www), o domínio da Vercel,
+// localhost em dev, APP_URL do .env e qualquer *.vercel.app (preview deploys).
 const ALLOWED_ORIGINS = new Set(
-  [process.env.APP_URL, "http://localhost:5173", "http://localhost:4173"]
+  [
+    process.env.APP_URL,                       // ex: https://www.aasiam.com.br
+    "https://www.aasiam.com.br",
+    "https://aasiam.com.br",
+    "https://loja-aasiam-tkah.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:4173",
+  ]
     .filter(Boolean)
     .map((o) => o.replace(/\/$/, "")) // remove barra final acidental
 );
