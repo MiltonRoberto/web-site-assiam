@@ -1,3 +1,7 @@
+// IMPORTANTE: deve ser o primeiro import — aplica o fix SSL global antes do
+// googleapis carregar (imports ESM executam em ordem).
+import "./ssl-legacy.js";
+
 import "dotenv/config";
 
 import express from "express";
