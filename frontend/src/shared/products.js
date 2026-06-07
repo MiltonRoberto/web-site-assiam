@@ -73,7 +73,7 @@ export const PRODUCTS = [
 		defaultVerdeSize: 'M',
 		defaultBegeSize: 'M',
 		images: [
-			'imgs/combo-essencial.png',
+			'imgs/combo01.png',
 			'/imgs/moletom-verde.png',
 			'/imgs/moletom-off-white.png',
 		],
@@ -95,7 +95,7 @@ export const PRODUCTS = [
 		defaultHoodieVariant: 'verde',
 		defaultHoodieSize: 'M',
 		images: [
-			'/imgs/combo-alcateia.png',
+			'/imgs/combo02.png',
 			'/imgs/moletom-verde.png',
 			'/imgs/moletom-off-white.png',
 			'/imgs/copo.png',
@@ -193,7 +193,7 @@ export const PRODUCTS = [
 		defaultHoodieSize: 'M',
 		defaultBackpackModel: 'campus',
 		images: [
-			'/imgs/combo-alpha.png',
+			'/imgs/combo03.png',
 			'/imgs/moletom-verde.png',
 			'/imgs/moletom-off-white.png',
 			'/imgs/copo.png',
