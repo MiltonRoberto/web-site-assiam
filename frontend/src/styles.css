@@ -386,6 +386,10 @@ a { color: inherit; }
 .cat-pill:hover { color: var(--text); border-color: var(--line-strong); background: var(--panel-2); }
 .cat-pill.active { background: var(--green); border-color: var(--green); color: var(--on-green); }
 
+@media (max-width: 640px) {
+  .cat-filter { justify-content: center; }
+}
+
 /* ─── CATALOG (single page with category sections) ─── */
 .catalog-section { padding-bottom: 56px; }
 .catalog-section:last-child { padding-bottom: 0; }

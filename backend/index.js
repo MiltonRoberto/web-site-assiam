@@ -121,7 +121,7 @@ app.post("/api/checkout", async (req, res) => {
       }
     });
 
-    // Armazena itens em memória para exibir na tela de confirmação
+    // Armazena pedido em memória — a planilha só é preenchida após confirmação pelo webhook
     orderCache.set(orderId, {
       items: order.lines.map((line) => ({
         name: line.variant
@@ -130,23 +130,12 @@ app.post("/api/checkout", async (req, res) => {
         quantity: line.quantity,
         unitPriceCents: line.unitPriceCents,
       })),
+      order,
+      customer: { name: customer.name, phone: customer.phone, notes: customer.notes },
       totalCents: order.totalCents,
-      customer: { name: customer.name, phone: customer.phone },
     });
 
-    appendOrderToSheet({
-      orderId,
-      customer,
-      order,
-      status: "pending"
-    })
-      .then(() => console.log(`[Sheets] Pedido ${orderId} registrado na planilha.`))
-      .catch((err) => {
-        console.error(`[Sheets] Falha ao registrar pedido ${orderId}:`, err.message);
-        if (err.response?.data) {
-          console.error("[Sheets] Detalhe da API Google:", JSON.stringify(err.response.data));
-        }
-      });
+    console.log(`[Checkout] Pedido ${orderId} criado em memória. Aguardando confirmação via webhook.`);
 
     return res.status(201).json({ orderId, url });
   } catch (err) {
@@ -212,6 +201,9 @@ app.get("/api/pedido/:orderId", async (req, res) => {
 });
 
 app.post("/api/webhooks/infinitepay", async (req, res) => {
+  // Responde 200 imediatamente — InfinitePay exige resposta rápida
+  res.sendStatus(200);
+
   try {
     const {
       order_nsu: orderId,
@@ -222,10 +214,20 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
       installments
     } = req.body || {};
 
-    console.log("[Webhook] InfinitePay recebido:", JSON.stringify(req.body));
+    console.log(`[Webhook] InfinitePay recebido — orderId: ${orderId} | status: ${status} | método: ${capture_method || "?"} | body: ${JSON.stringify(req.body)}`);
 
     if (!orderId) {
-      return res.sendStatus(200);
+      console.warn("[Webhook] Notificação sem order_nsu — ignorada.");
+      return;
+    }
+
+    console.log(`[Webhook] Status recebido para ${orderId}: "${status}"`);
+
+    // Recupera dados do pedido salvos em memória no momento do checkout
+    const cached = orderCache.get(orderId);
+    if (!cached) {
+      console.warn(`[Webhook] Pedido ${orderId} não encontrado no cache em memória. O servidor pode ter reiniciado após o checkout.`);
+      return;
     }
 
     const detail = [
@@ -233,23 +235,27 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
       invoice_slug    && `slug: ${invoice_slug}`
     ].filter(Boolean).join(", ");
 
-    updateOrderInSheet({
+    // Escreve na planilha com todos os dados do pedido + detalhes do pagamento
+    appendOrderToSheet({
+      event:         "Pagamento webhook",
       orderId,
+      customer:      cached.customer,
+      order:         cached.order,
       status:        status || "webhook",
       captureMethod: capture_method,
       installments:  Number(installments) || 0,
-      detail
-    }).catch((err) => {
-      console.error(`[Sheets] Falha ao atualizar pedido ${orderId} via webhook:`, err.message);
-      if (err.response?.data) {
-        console.error("[Sheets] Detalhe da API Google:", JSON.stringify(err.response.data));
-      }
-    });
+      detail,
+    })
+      .then(() => console.log(`[Sheets] Pedido ${orderId} registrado na planilha via webhook com status "${resolvePaymentStatus(status)}".`))
+      .catch((err) => {
+        console.error(`[Sheets] Falha ao registrar pedido ${orderId} via webhook:`, err.message);
+        if (err.response?.data) {
+          console.error("[Sheets] Detalhe da API Google:", JSON.stringify(err.response.data));
+        }
+      });
 
-    res.sendStatus(200);
   } catch (err) {
-    console.error("Erro no webhook InfinitePay:", err);
-    res.sendStatus(200);
+    console.error("[Webhook] Erro ao processar notificação InfinitePay:", err);
   }
 });
 
@@ -277,13 +283,14 @@ function sanitizeCustomer(customer = {}) {
 }
 
 async function appendOrderToSheet({
-  event = "Novo pedido",
+  event = "Pagamento webhook",
   orderId,
   customer,
   order,
   status = "",
+  captureMethod = "",
+  installments = 0,
   detail = "",
-  notes = ""
 }) {
   if (!isGoogleSheetsConfigured()) {
     console.warn("[Sheets] Integração com Google Sheets não configurada — pulando registro.");
@@ -300,25 +307,27 @@ async function appendOrderToSheet({
 
   const itemSummary = summarizeOrderLines(order.lines || []);
   const statusLabel = resolvePaymentStatus(status);
-  const detailText  = detail || notes;
+  const pagamento   = resolveCaptureMethod(captureMethod);
+  const parcelas    = captureMethod === "pix"
+    ? "—"
+    : installments > 1 ? `${installments}x` : (captureMethod ? "1x" : "");
 
-  // 14 colunas A-N
-  // Pagamento (J) e Parcelas (K) ficam vazios — serão preenchidos pelo webhook
+  // 14 colunas A-N — todas preenchidas em uma única linha pelo webhook
   const row = [
-    formatDateTime(),        // A — Data/Hora
-    event,                   // B — Evento
-    orderId,                 // C — ID Pedido
-    customer.name,           // D — Nome
-    customer.phone,          // E — Telefone
-    itemSummary.items,       // F — Itens (ex: "1x Moletom Verde\n2x Caneca")
-    itemSummary.sizes,       // G — Tamanho
-    order.totalQuantity || "",// H — Quantidade total
-    order.totalAmount || "", // I — Total (reais)
-    "",                      // J — Pagamento (webhook preenche)
-    "",                      // K — Parcelas  (webhook preenche)
-    statusLabel,             // L — Status
-    detailText,              // M — Detalhe
-    customer.notes || ""     // N — Observações
+    formatDateTime(),          // A — Data/Hora da confirmação
+    event,                     // B — Evento
+    orderId,                   // C — ID Pedido
+    customer.name  || "",      // D — Nome
+    customer.phone || "",      // E — Telefone
+    itemSummary.items,         // F — Itens (ex: "1x Moletom Verde\n2x Caneca")
+    itemSummary.sizes,         // G — Tamanho/variante
+    order.totalQuantity || "", // H — Quantidade total
+    order.totalAmount   || "", // I — Total (reais)
+    pagamento,                 // J — Pix / Cartão / Débito
+    parcelas,                  // K — Parcelas (ex: "3x" ou "—" para Pix)
+    statusLabel,               // L — Pago / Pendente / Recusado etc.
+    detail,                    // M — nsu, slug
+    customer.notes || ""       // N — Observações do comprador
   ];
 
   await sheets.spreadsheets.values.append({
@@ -374,59 +383,6 @@ async function ensureSheetHeader(sheets, spreadsheetId, sheetName) {
     requestBody: { values: [SHEET_HEADERS] }
   });
   console.log("[Sheets] Cabeçalho da planilha atualizado.");
-}
-
-/**
- * Encontra a linha do pedido na planilha (busca orderId na coluna C)
- * e atualiza as colunas J (Pagamento), K (Parcelas), L (Status), M (Detalhe).
- */
-async function updateOrderInSheet({ orderId, status, captureMethod, installments, detail }) {
-  if (!isGoogleSheetsConfigured()) return;
-
-  const auth = createGoogleAuth();
-  const sheets = google.sheets({ version: "v4", auth });
-  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
-  const sheetName = defaultGoogleSheetName;
-
-  // Lê toda a coluna C para localizar o orderId
-  const colC = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${quoteSheetName(sheetName)}!C:C`
-  });
-
-  const rows = colC.data.values || [];
-  const rowIndex = rows.findIndex((r) => r[0] === orderId);
-
-  if (rowIndex === -1) {
-    console.warn(`[Sheets] Pedido ${orderId} não encontrado na planilha (webhook ignorado para atualização).`);
-    return;
-  }
-
-  const sheetRow = rowIndex + 1; // índice 1-based do Google Sheets
-
-  const pagamento = resolveCaptureMethod(captureMethod);
-  const parcelas  = captureMethod === "pix"
-    ? "—"
-    : installments > 1
-      ? `${installments}x`
-      : "1x";
-  const statusLabel = resolvePaymentStatus(status);
-
-  // Atualiza colunas J, K, L, M da linha encontrada
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      valueInputOption: "USER_ENTERED",
-      data: [
-        { range: `${quoteSheetName(sheetName)}!J${sheetRow}`, values: [[pagamento]] },
-        { range: `${quoteSheetName(sheetName)}!K${sheetRow}`, values: [[parcelas]]  },
-        { range: `${quoteSheetName(sheetName)}!L${sheetRow}`, values: [[statusLabel]] },
-        { range: `${quoteSheetName(sheetName)}!M${sheetRow}`, values: [[detail || ""]] }
-      ]
-    }
-  });
-
-  console.log(`[Sheets] Pedido ${orderId} atualizado (linha ${sheetRow}): ${statusLabel} | ${pagamento} | ${parcelas}`);
 }
 
 function resolveCaptureMethod(method) {
