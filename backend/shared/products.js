@@ -141,6 +141,18 @@ export const PRODUCTS = [
 			images: ['/imgs/camiseta-aasiam.png'],
 		},
 		{
+			id: 'uniforme-oficial-aasiam-2025',
+			kind: 'quantity',
+			name: 'Uniforme Oficial AASIAM 2025',
+			shortName: 'Uniforme Oficial',
+			description: 'Uniforme oficial AASIAM 2025.',
+			priceCents: 0,
+			tag: 'Esgotado',
+			soldOut: true,
+			accent: '#12c86b',
+			images: ['/imgs/camiseta-offwhite-aasiam.png'],
+		},
+		{
 			id: 'manta',
 			kind: 'quantity',
 			name: 'Manta AASIAM',

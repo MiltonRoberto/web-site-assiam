@@ -55,6 +55,7 @@ const CATEGORY_MAP = {
 	'moletom-verde': 'moletom',
 	'moletom-bege': 'moletom',
 	'camiseta-aasiam': 'camiseta',
+	'uniforme-oficial-aasiam-2025': 'camiseta',
 	'kit-2-moletons': 'kits',
 	'kit-moletom-caneca': 'kits',
 	'kit-completo': 'kits',
