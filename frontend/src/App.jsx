@@ -1253,6 +1253,7 @@ function Stepper({ qty, onDec, onInc }) {
 function CheckoutView({ cart, onBack, onResult, className }) {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState('');
+	const [submitAttempted, setSubmitAttempted] = useState(false);
 	const [form, setForm] = useState({
 		nome: '',
 		sobrenome: '',
@@ -1261,6 +1262,18 @@ function CheckoutView({ cart, onBack, onResult, className }) {
 	});
 
 	const t = cartTotals(cart);
+	const emailValue = form.email.trim();
+	const fieldStatus = {
+		nome: form.nome.trim().length > 0,
+		sobrenome: form.sobrenome.trim().length > 0,
+		email:
+			emailValue.length > 0 &&
+			emailValue.includes('@') &&
+			emailValue.includes('.'),
+		telefone: form.telefone.trim().length > 0,
+	};
+	const isFormValid = Object.values(fieldStatus).every(Boolean);
+	const isPaymentDisabled = loading || !isFormValid;
 
 	const customer = useMemo(
 		() => ({
@@ -1272,9 +1285,20 @@ function CheckoutView({ cart, onBack, onResult, className }) {
 	);
 
 	const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+	const inputClass = field =>
+		`input${submitAttempted && !fieldStatus[field] ? ' input-error' : ''}`;
+
+	function markInvalidSubmit() {
+		if (!loading && !isFormValid) {
+			setSubmitAttempted(true);
+		}
+	}
 
 	async function handleCheckout() {
 		setError('');
+		setSubmitAttempted(true);
+		if (!isFormValid || loading) return;
+
 		setLoading(true);
 		try {
 			const selection = cartToSelection(cart);
@@ -1325,14 +1349,14 @@ function CheckoutView({ cart, onBack, onResult, className }) {
 					<div className="form-stack">
 						<div className="row-2">
 							<input
-								className="input"
+								className={inputClass('nome')}
 								placeholder="Nome"
 								value={form.nome}
 								onChange={e => set('nome', e.target.value)}
 								autoComplete="given-name"
 							/>
 							<input
-								className="input"
+								className={inputClass('sobrenome')}
 								placeholder="Sobrenome"
 								value={form.sobrenome}
 								onChange={e => set('sobrenome', e.target.value)}
@@ -1340,7 +1364,7 @@ function CheckoutView({ cart, onBack, onResult, className }) {
 							/>
 						</div>
 						<input
-							className="input"
+							className={inputClass('email')}
 							placeholder="E-mail"
 							value={form.email}
 							onChange={e => set('email', e.target.value)}
@@ -1348,7 +1372,7 @@ function CheckoutView({ cart, onBack, onResult, className }) {
 							autoComplete="email"
 						/>
 						<input
-							className="input"
+							className={inputClass('telefone')}
 							placeholder="Telefone"
 							value={form.telefone}
 							onChange={e => set('telefone', e.target.value)}
@@ -1392,20 +1416,26 @@ function CheckoutView({ cart, onBack, onResult, className }) {
 						</span>
 					</div>
 
-					<button
-						type="button"
-						className="btn btn-primary btn-block"
-						onClick={handleCheckout}
-						disabled={loading}
+					<div
+						className={`checkout-submit-wrap${isPaymentDisabled ? ' disabled' : ''}`}
+						onClick={markInvalidSubmit}
+						role="presentation"
 					>
-						{loading ? (
-							'Aguarde...'
-						) : (
-							<>
-								<Zap size={16} /> Ir para pagamento — {fmt(t.total)}
-							</>
-						)}
-					</button>
+						<button
+							type="button"
+							className="btn btn-primary btn-block"
+							onClick={handleCheckout}
+							disabled={isPaymentDisabled}
+						>
+							{loading ? (
+								'Aguarde...'
+							) : (
+								<>
+									<Zap size={16} /> Ir para pagamento — {fmt(t.total)}
+								</>
+							)}
+						</button>
+					</div>
 
 					<button
 						type="button"
@@ -1554,29 +1584,83 @@ function PagamentoConcluido({ onBack, className }) {
 			return;
 		}
 
-		// Repassa todos os params extras que a InfinitePay devolve no redirect
+		// Params completos (usados para carregar itens/cliente da tela)
 		const qs = new URLSearchParams();
-		['transaction_nsu', 'slug', 'receipt_url', 'status'].forEach(k => {
+		['transaction_nsu', 'slug', 'receipt_url', 'status', 'capture_method', 'transaction_id'].forEach(k => {
 			if (params.has(k)) qs.set(k, params.get(k));
 		});
 
-		fetch(`${API_BASE}/api/pedido/${encodeURIComponent(orderId)}?${qs.toString()}`)
-			.then(async res => {
+		// Params para o polling de status (payment_check da InfinitePay)
+		const statusQs = new URLSearchParams();
+		['transaction_nsu', 'slug', 'capture_method'].forEach(k => {
+			if (params.has(k)) statusQs.set(k, params.get(k));
+		});
+
+		let cancelled = false;
+		let pollTimer = null;
+		const startedAt = Date.now();
+		const POLL_INTERVAL = 5000;          // 5 segundos
+		const MAX_DURATION  = 2 * 60 * 1000; // 2 minutos
+
+		async function loadFull() {
+			const res = await fetch(`${API_BASE}/api/pedido/${encodeURIComponent(orderId)}?${qs.toString()}`);
+			const data = await res.json();
+			if (!res.ok) throw new Error(data.error || 'Erro ao consultar pedido.');
+			return data;
+		}
+
+		// Verificação ativa de status a cada 5s, até 2 min
+		async function poll() {
+			if (cancelled) return;
+			try {
+				const res = await fetch(`${API_BASE}/api/pedido/${encodeURIComponent(orderId)}/status?${statusQs.toString()}`);
 				const data = await res.json();
-				if (!res.ok) throw new Error(data.error || 'Erro ao consultar pedido.');
+				if (cancelled) return;
+
+				if (data.paid) {
+					// Pagamento confirmado → recarrega dados completos e mostra sucesso
+					try {
+						const full = await loadFull();
+						if (!cancelled) { setPedido({ ...full, paid: true }); setState('success'); }
+					} catch {
+						if (!cancelled) { setPedido(p => ({ ...(p || {}), orderId, paid: true })); setState('success'); }
+					}
+					return; // para o polling
+				}
+			} catch (err) {
+				console.error('Erro no polling de status:', err);
+			}
+
+			// Ainda não confirmado
+			if (Date.now() - startedAt >= MAX_DURATION) {
+				if (!cancelled) setState('processing'); // 2 min sem confirmação
+				return;
+			}
+			pollTimer = setTimeout(poll, POLL_INTERVAL);
+		}
+
+		// Carga inicial: se já estiver pago, mostra sucesso; senão inicia o polling
+		loadFull()
+			.then(data => {
+				if (cancelled) return;
 				setPedido(data);
-				// Sucesso: pago ou aguardando confirmação (pending/concluido)
-				const ok = data.paid || ['pending', 'concluido', 'approved'].includes(data.status);
-				setState(ok ? 'success' : 'error');
-				if (!ok) setErrMsg('O pagamento ainda não foi confirmado pela operadora.');
+				if (data.paid) {
+					setState('success');
+				} else {
+					setState('loading');
+					pollTimer = setTimeout(poll, POLL_INTERVAL);
+				}
 			})
 			.catch(err => {
+				if (cancelled) return;
 				console.error('Erro ao consultar pedido:', err);
 				setState('error');
 				setErrMsg(
 					'Não foi possível confirmar seu pagamento. Guarde o número do pedido e entre em contato com o suporte.',
 				);
 			});
+
+		return () => { cancelled = true; if (pollTimer) clearTimeout(pollTimer); };
 	}, []);
 
 	const orderId = new URLSearchParams(window.location.search).get('pedido') ?? '—';
@@ -1706,6 +1790,38 @@ function PagamentoConcluido({ onBack, className }) {
 									<ExternalLink size={15} /> Ver comprovante
 								</a>
 							)}
+							<button
+								type="button"
+								className="btn btn-primary btn-sm"
+								onClick={onBack}
+							>
+								<ShoppingCart size={15} /> Voltar para a loja
+							</button>
+						</div>
+					</>
+				)}
+
+				{/* ── EM PROCESSAMENTO (2 min sem confirmação) ── */}
+				{state === 'processing' && (
+					<>
+						<div className="confirm-icon pc-loading-icon">
+							<Loader2 size={32} className="pc-spin" />
+						</div>
+
+						<span className="confirm-eyebrow">Pedido #{orderId}</span>
+						<h1>Pagamento em processamento</h1>
+						<p style={{ color: 'var(--text-dim)', margin: '0 0 16px' }}>
+							Seu pagamento está sendo processado. Você receberá uma
+							confirmação em breve. Pode fechar esta página com segurança —
+							guarde o número do pedido abaixo.
+						</p>
+
+						<div className="pc-order-ref">
+							<span>Número do pedido</span>
+							<strong>{orderId}</strong>
+						</div>
+
+						<div className="confirm-actions">
 							<button
 								type="button"
 								className="btn btn-primary btn-sm"

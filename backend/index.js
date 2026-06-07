@@ -190,7 +190,7 @@ app.post("/api/checkout", async (req, res) => {
       totalCents: order.totalCents,
     });
 
-    console.log(`[Checkout] Pedido ${orderId} criado em memória. Aguardando confirmação via webhook.`);
+    console.log(`[Checkout] Pedido ${orderId} criado. Aguardando pagamento.`);
 
     return res.status(201).json({ orderId, url });
   } catch (err) {
@@ -258,60 +258,135 @@ app.get("/api/pedido/:orderId", async (req, res) => {
   }
 });
 
+/* ─── VERIFICAÇÃO ATIVA DE STATUS (polling do frontend) ─── */
+// Consulta o status atual diretamente na InfinitePay (payment_check).
+// Usada pelo frontend a cada 5s para atualizar a tela sem depender só do webhook.
+app.get("/api/pedido/:orderId/status", async (req, res) => {
+  const { orderId } = req.params;
+  const { transaction_nsu, slug } = req.query;
+
+  try {
+    let paymentData = null;
+
+    if (transaction_nsu && slug) {
+      try {
+        paymentData = await verificarPagamento({
+          orderId,
+          transactionNsu: transaction_nsu,
+          slug,
+        });
+      } catch (err) {
+        console.error(`[Status] Erro ao verificar ${orderId} na InfinitePay:`, err.message);
+      }
+    }
+
+    const rawStatus  = paymentData?.status ?? (paymentData?.paid ? "paid" : "pending");
+    const statusLabel = normalizeWebhookStatus(rawStatus);
+    const paid = paymentData?.paid === true || statusLabel === "Pago";
+
+    return res.json({
+      orderId,
+      paid,
+      status: statusLabel,          // "Pago" | "Recusado" | "Em análise"
+      rawStatus,
+      capture_method: paymentData?.capture_method ?? req.query.capture_method ?? null,
+      installments:   paymentData?.installments   ?? null,
+      verified:       paymentData !== null,
+    });
+  } catch (err) {
+    console.error(`[Status] Erro em GET /api/pedido/${orderId}/status:`, err);
+    return res.status(500).json({ error: "Não foi possível verificar o status do pedido." });
+  }
+});
+
 app.post("/api/webhooks/infinitepay", async (req, res) => {
   // Responde 200 imediatamente — InfinitePay exige resposta rápida
   res.sendStatus(200);
 
   try {
-    const {
-      order_nsu: orderId,
-      status,
-      transaction_nsu,
-      invoice_slug,
-      capture_method,
-      installments
-    } = req.body || {};
+    const body = req.body || {};
+    console.log("[Webhook] Body completo:", JSON.stringify(body));
 
-    console.log(`[Webhook] InfinitePay recebido — orderId: ${orderId} | status: ${status} | método: ${capture_method || "?"} | body: ${JSON.stringify(req.body)}`);
+    // O orderId pode vir em campos diferentes dependendo da configuração InfinitePay
+    const orderId =
+      body.order_nsu ||
+      body.order_id ||
+      body.external_reference ||
+      body.metadata?.order_id ||
+      body.metadata?.orderId ||
+      body.metadata?.order_nsu ||
+      null;
+
+    // O status pode vir em status, payment_status ou transaction_status
+    const rawStatus =
+      body.status || body.payment_status || body.transaction_status || "";
+
+    console.log(`[Webhook] orderId: ${orderId} | status: ${rawStatus}`);
 
     if (!orderId) {
-      console.warn("[Webhook] Notificação sem order_nsu — ignorada.");
+      console.warn("[Webhook] Não foi possível identificar o orderId no payload — ignorado.");
       return;
     }
 
-    console.log(`[Webhook] Status recebido para ${orderId}: "${status}"`);
+    const statusLabel = normalizeWebhookStatus(rawStatus);
 
-    // Recupera dados do pedido salvos em memória no momento do checkout
+    // Só grava na planilha em estados terminais (Pago/Recusado).
+    // Eventos intermediários (QR gerado, aguardando pagamento) NÃO geram linha.
+    if (statusLabel !== "Pago" && statusLabel !== "Recusado") {
+      console.log(`[Webhook] Status "${rawStatus}" → "${statusLabel}" não é terminal. Planilha não será preenchida ainda.`);
+      return;
+    }
+
+    // Idempotência: evita gravar a mesma confirmação duas vezes (InfinitePay reenvia webhooks)
     const cached = orderCache.get(orderId);
-    if (!cached) {
-      console.warn(`[Webhook] Pedido ${orderId} não encontrado no cache em memória. O servidor pode ter reiniciado após o checkout.`);
+    if (cached?.written) {
+      console.log(`[Webhook] Pedido ${orderId} já registrado anteriormente — ignorando reenvio.`);
       return;
     }
+
+    // Dados de pagamento (com fallback de nomes de campo)
+    const captureMethod  = body.capture_method || body.payment_method || "";
+    const installments   = Number(body.installments) || 0;
+    const transactionNsu = body.transaction_nsu || body.transaction_id || "";
+    const invoiceSlug    = body.invoice_slug || body.slug || "";
+    const amountCents    = Number(body.paid_amount ?? body.amount) || 0;
 
     const detail = [
-      transaction_nsu && `nsu: ${transaction_nsu}`,
-      invoice_slug    && `slug: ${invoice_slug}`
+      transactionNsu && `nsu: ${transactionNsu}`,
+      invoiceSlug    && `slug: ${invoiceSlug}`,
+      !cached        && "cache indisponível (dados parciais)"
     ].filter(Boolean).join(", ");
 
-    // Escreve na planilha com todos os dados do pedido + detalhes do pagamento
-    appendOrderToSheet({
-      event:         "Pagamento webhook",
-      orderId,
-      customer:      cached.customer,
-      order:         cached.order,
-      status:        status || "webhook",
-      captureMethod: capture_method,
-      installments:  Number(installments) || 0,
-      detail,
-    })
-      .then(() => console.log(`[Sheets] Pedido ${orderId} registrado na planilha via webhook com status "${resolvePaymentStatus(status)}".`))
-      .catch((err) => {
-        console.error(`[Sheets] Falha ao registrar pedido ${orderId} via webhook:`, err.message);
-        if (err.response?.data) {
-          console.error("[Sheets] Detalhe da API Google:", JSON.stringify(err.response.data));
-        }
-      });
+    // Se o cache foi perdido (ex: reinício do Render), grava com os dados disponíveis no webhook
+    const customer = cached?.customer || { name: "", phone: "", notes: "" };
+    const order    = cached?.order || {
+      lines: [],
+      totalAmount: amountCents ? amountCents / 100 : "",
+      totalQuantity: ""
+    };
 
+    console.log(`[Sheets] Escrevendo pedido ${orderId} com status ${statusLabel}`);
+
+    try {
+      await appendOrderToSheet({
+        event: "Pagamento webhook",
+        orderId,
+        customer,
+        order,
+        statusLabel,
+        captureMethod,
+        installments,
+        detail,
+      });
+      console.log(`[Sheets] Sucesso ao escrever pedido ${orderId}`);
+      // Marca como gravado para idempotência (se o cache existir)
+      if (cached) cached.written = true;
+    } catch (err) {
+      console.error(`[Sheets] ERRO ao escrever pedido ${orderId}: ${err.message}`);
+      if (err.response?.data) {
+        console.error("[Sheets] Detalhe da API Google:", JSON.stringify(err.response.data));
+      }
+    }
   } catch (err) {
     console.error("[Webhook] Erro ao processar notificação InfinitePay:", err);
   }
@@ -355,7 +430,7 @@ async function appendOrderToSheet({
   orderId,
   customer,
   order,
-  status = "",
+  statusLabel = "Em análise",
   captureMethod = "",
   installments = 0,
   detail = "",
@@ -374,7 +449,6 @@ async function appendOrderToSheet({
   await ensureSheetHeader(sheets, spreadsheetId, sheetName);
 
   const itemSummary = summarizeOrderLines(order.lines || []);
-  const statusLabel = resolvePaymentStatus(status);
   const pagamento   = resolveCaptureMethod(captureMethod);
   const parcelas    = captureMethod === "pix"
     ? "—"
@@ -462,19 +536,21 @@ function resolveCaptureMethod(method) {
   return map[method] || method || "";
 }
 
-function resolvePaymentStatus(status) {
-  const map = {
-    approved:   "Pago",
-    paid:       "Pago",
-    pending:    "Pendente",
-    in_process: "Em análise",
-    rejected:   "Recusado",
-    cancelled:  "Cancelado",
-    refunded:   "Reembolsado",
-    concluido:  "Pendente",
-    unknown:    "Pendente"
-  };
-  return map[status] || status || "Pendente";
+/**
+ * Normaliza o status cru do webhook/payment_check da InfinitePay para um rótulo da planilha.
+ *  - approved / paid / captured / success → "Pago"
+ *  - refused / failed / cancelled / rejected → "Recusado"
+ *  - qualquer outro (pending, waiting, created…) → "Em análise"
+ */
+function normalizeWebhookStatus(status) {
+  const s = String(status || "").toLowerCase().trim();
+
+  const pagos     = ["approved", "paid", "captured", "success", "succeeded", "concluido", "concluído", "completed"];
+  const recusados = ["refused", "failed", "cancelled", "canceled", "rejected", "denied", "chargeback", "refunded", "expired"];
+
+  if (pagos.includes(s))     return "Pago";
+  if (recusados.includes(s)) return "Recusado";
+  return "Em análise";
 }
 
 function formatDateTime() {

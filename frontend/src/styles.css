@@ -1124,6 +1124,11 @@ a { color: inherit; }
   box-shadow: 0 0 0 3px var(--green-softer);
 }
 
+.input.input-error {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-bg);
+}
+
 .select-input {
   color-scheme: inherit;
   appearance: none;
@@ -1186,6 +1191,18 @@ a { color: inherit; }
   color: var(--danger);
   font-size: 0.82rem;
   opacity: 0.9;
+}
+
+.checkout-submit-wrap {
+  width: 100%;
+}
+
+.checkout-submit-wrap.disabled {
+  cursor: not-allowed;
+}
+
+.checkout-submit-wrap.disabled .btn:disabled {
+  pointer-events: none;
 }
 
 /* ─── CONFIRMATION ─── */
