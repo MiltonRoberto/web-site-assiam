@@ -325,14 +325,19 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
     const rawStatus =
       body.status || body.payment_status || body.transaction_status || "";
 
-    console.log(`[Webhook] orderId: ${orderId} | status: ${rawStatus}`);
+    // A InfinitePay às vezes envia o status vazio "" mesmo com o pagamento concluído.
+    // Nesse caso, paid_amount > 0 indica que o pagamento foi confirmado.
+    const paidAmount  = Number(body.paid_amount) || 0;
+    const statusFinal = paidAmount > 0 ? "approved" : (rawStatus || "");
+
+    console.log(`[Webhook] orderId: ${orderId} | status: "${rawStatus}" | paid_amount: ${paidAmount}`);
 
     if (!orderId) {
       console.warn("[Webhook] Não foi possível identificar o orderId no payload — ignorado.");
       return;
     }
 
-    const statusLabel = normalizeWebhookStatus(rawStatus);
+    const statusLabel = normalizeWebhookStatus(statusFinal);
 
     // Só grava na planilha em estados terminais (Pago/Recusado).
     // Eventos intermediários (QR gerado, aguardando pagamento) NÃO geram linha.
@@ -353,7 +358,7 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
     const installments   = Number(body.installments) || 0;
     const transactionNsu = body.transaction_nsu || body.transaction_id || "";
     const invoiceSlug    = body.invoice_slug || body.slug || "";
-    const amountCents    = Number(body.paid_amount ?? body.amount) || 0;
+    const amountCents    = paidAmount || Number(body.amount) || 0;
 
     const detail = [
       transactionNsu && `nsu: ${transactionNsu}`,
