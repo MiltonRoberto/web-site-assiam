@@ -1,17 +1,9 @@
 import "dotenv/config";
 
 import express from "express";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { google } from "googleapis";
 import { calculateOrder, sanitizeSelection } from "./shared/order.js";
 import { criarLinkPagamento, verificarPagamento } from "./infinitepay.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-// Em produção (Render), o frontend já é servido pela Vercel.
-// Em dev local, serve o dist/ gerado pelo build do frontend.
-const rootDir = path.resolve(__dirname, "..");
 
 const app = express();
 const port = process.env.PORT || 3333;
@@ -82,6 +74,68 @@ app.get("/api/config", (_req, res) => {
     googleSheetsConfigured: isGoogleSheetsConfigured(),
     googleSheetName: defaultGoogleSheetName
   });
+});
+
+/* ─── TEST SHEETS ─── */
+// Rota de diagnóstico — testa autenticação e escrita na planilha em produção.
+// Acesse: GET /api/test-sheets
+app.get("/api/test-sheets", async (_req, res) => {
+  if (!isGoogleSheetsConfigured()) {
+    return res.status(500).json({
+      ok: false,
+      error: "Variáveis de ambiente do Google Sheets não configuradas.",
+      vars: {
+        GOOGLE_SHEETS_SPREADSHEET_ID: Boolean(process.env.GOOGLE_SHEETS_SPREADSHEET_ID),
+        GOOGLE_SERVICE_ACCOUNT_EMAIL:  Boolean(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL),
+        GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: Boolean(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY),
+      }
+    });
+  }
+
+  try {
+    const auth   = createGoogleAuth();
+    const sheets = google.sheets({ version: "v4", auth });
+    const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+    const sheetName     = defaultGoogleSheetName;
+
+    // 1. Verifica se a planilha é acessível
+    const meta = await sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: "sheets.properties.title"
+    });
+    const abas = meta.data.sheets?.map((s) => s.properties.title) || [];
+
+    // 2. Tenta escrever uma linha de teste
+    const timestamp = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `'${sheetName}'!A:N`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[
+          timestamp, "TESTE-CONEXAO", "AASIAM-TEST-0000",
+          "Sistema", "N/A", "1x Teste", "—", "1", "0.00",
+          "Pix", "—", "Teste", "diagnóstico /api/test-sheets", ""
+        ]]
+      }
+    });
+
+    return res.json({
+      ok: true,
+      message: "Autenticação e escrita na planilha OK.",
+      spreadsheetId,
+      sheetName,
+      abasEncontradas: abas,
+      linhaInserida: timestamp
+    });
+  } catch (err) {
+    console.error("[test-sheets] Erro:", err.message, err.response?.data);
+    return res.status(500).json({
+      ok: false,
+      error: err.message,
+      detail: err.response?.data || null
+    });
+  }
 });
 
 app.post("/api/checkout", async (req, res) => {
@@ -263,22 +317,28 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
   }
 });
 
-// frontend/dist quando rodando a partir de backend/ (estrutura reorganizada)
-const distDir = path.join(rootDir, "frontend", "dist");
-if (process.env.NODE_ENV !== "production") {
-  // Em dev local, serve o build do frontend se existir
-  app.use(express.static(distDir));
-  app.get("/{*splat}", (_req, res) => {
-    res.sendFile(path.join(distDir, "index.html"));
-  });
-}
+// Em produção o frontend é servido pela Vercel — o backend é apenas a API.
+// Em dev local o frontend é servido pelo Vite (porta 5173).
+// Não há catch-all aqui para não interferir com rotas /api/*.
 
 app.listen(port, () => {
-  console.log(`API AASIAM rodando na porta ${port}`);
-  console.log(`CORS origens explícitas: ${[...ALLOWED_ORIGINS].join(", ")} + *.vercel.app`);
-  console.log(`InfinitePay handle: ${process.env.INFINITEPAY_HANDLE || "NÃO CONFIGURADO"}`);
-  console.log(`APP_URL: ${process.env.APP_URL || "não definido (usando fallback localhost)"}`);
-  console.log(`API_URL: ${process.env.API_URL || "não definido (usando fallback localhost)"}`);
+  console.log(`\n=== API AASIAM iniciada na porta ${port} ===`);
+  console.log(`APP_URL : ${process.env.APP_URL  || "⚠ não definido (fallback localhost)"}`);
+  console.log(`API_URL : ${process.env.API_URL  || "⚠ não definido (fallback localhost)"}`);
+  console.log(`CORS    : ${[...ALLOWED_ORIGINS].join(", ")} + *.vercel.app`);
+  console.log(`InfinitePay handle: ${process.env.INFINITEPAY_HANDLE || "⚠ NÃO CONFIGURADO"}`);
+
+  // Diagnóstico do Google Sheets
+  const sheetsOk = isGoogleSheetsConfigured();
+  console.log(`Google Sheets configurado: ${sheetsOk ? "✓ SIM" : "✗ NÃO"}`);
+  if (sheetsOk) {
+    const key = getGooglePrivateKey();
+    console.log(`  → email : ${process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL}`);
+    console.log(`  → key   : ${key ? `${key.slice(0, 27).replace(/\n/g, "↵")}... (${key.length} chars)` : "VAZIA"}`);
+    console.log(`  → sheet : ${process.env.GOOGLE_SHEETS_SPREADSHEET_ID} / aba "${defaultGoogleSheetName}"`);
+    console.log(`  → teste : GET /api/test-sheets`);
+  }
+  console.log("=".repeat(45) + "\n");
 });
 
 function sanitizeCustomer(customer = {}) {
@@ -422,21 +482,40 @@ function formatDateTime() {
 }
 
 function createGoogleAuth() {
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const key   = getGooglePrivateKey();
+
+  // Logs de diagnóstico — nunca expõe a chave completa
+  console.log(`[Google Auth] email configurado: ${email ? `${email.slice(0, 20)}...` : "NÃO DEFINIDO"}`);
+  console.log(`[Google Auth] private key: ${key
+    ? `${key.slice(0, 27).replace(/\n/g, "↵")}... (${key.length} chars, começa com BEGIN: ${key.includes("BEGIN PRIVATE KEY")})`
+    : "NÃO DEFINIDA"}`);
+
   return new google.auth.JWT({
-    email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    key: getGooglePrivateKey(),
+    email,
+    key,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"]
   });
 }
 
 function getGooglePrivateKey() {
+  // Alternativa Base64 (mais segura para painel de hosting)
   if (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_BASE64) {
     return Buffer.from(
       process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_BASE64,
       "base64"
     ).toString("utf8");
   }
-  return process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
+
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "";
+
+  // Normaliza os três formatos possíveis dependendo do ambiente:
+  //  1. Render UI: cole a chave com newlines reais → já tem \n reais, replace é no-op
+  //  2. .env local dotenv v17+: \n já convertido para newline real → idem
+  //  3. .env local dotenv antigo / var exportada manualmente: \n como backslash-n literal
+  return raw
+    .replace(/\\n/g, "\n")   // backslash-n literal → newline real
+    .trim();
 }
 
 function isGoogleSheetsConfigured() {
