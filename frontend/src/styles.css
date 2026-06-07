@@ -577,6 +577,11 @@ a { color: inherit; }
   background: var(--bg-2);
 }
 
+/* Combos: imagem preenche todo o frame (cover) em vez de ficar com bordas (contain) */
+.detail-media.is-combo img {
+  object-fit: cover;
+}
+
 .detail-placeholder {
   width: 100%;
   height: 100%;

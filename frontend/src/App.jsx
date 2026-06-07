@@ -770,6 +770,8 @@ function DetailView({ product, onBack, onAdd, onBuyNow, className }) {
 
 	const images = product.images || [];
 	const cat = CATEGORY_MAP[product.id] || 'acessorios';
+	// Combos (têm lista `includes`) usam object-fit: cover para a imagem preencher o frame
+	const isCombo = Array.isArray(product.includes) && product.includes.length > 0;
 
 	useEffect(() => {
 		setImgIndex(0);
@@ -831,7 +833,7 @@ function DetailView({ product, onBack, onAdd, onBuyNow, className }) {
 			<div className="detail-grid">
 				{/* media */}
 				<div
-					className="detail-media"
+					className={`detail-media${isCombo ? ' is-combo' : ''}`}
 					onMouseDown={onSwipeStart}
 					onMouseUp={onSwipeEnd}
 					onTouchStart={onSwipeStart}
