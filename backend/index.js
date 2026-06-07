@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { google } from "googleapis";
 import { calculateOrder, sanitizeSelection } from "../shared/order.js";
-import { criarLinkPagamento } from "./infinitepay.js";
+import { criarLinkPagamento, verificarPagamento } from "./infinitepay.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -101,6 +101,55 @@ app.post("/api/checkout", async (req, res) => {
     console.error("Erro em /api/checkout:", err);
     return res.status(err.status || 500).json({
       error: err.message || "Não foi possível criar o link de pagamento."
+    });
+  }
+});
+
+/* ─── CONSULTA DE PEDIDO ─── */
+
+app.get("/api/pedido/:orderId", async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { transaction_nsu, slug } = req.query;
+
+    if (!orderId) {
+      return res.status(400).json({ error: "orderId é obrigatório." });
+    }
+
+    let paymentData = null;
+
+    if (transaction_nsu && slug) {
+      try {
+        paymentData = await verificarPagamento({
+          orderId,
+          transactionNsu: transaction_nsu,
+          slug,
+        });
+      } catch (err) {
+        console.error("Erro ao verificar pagamento na InfinitePay:", err.message);
+        // Não propaga — retorna o que temos com verified: false
+      }
+    }
+
+    const paid = paymentData?.paid === true;
+    const status = paymentData?.status ?? (req.query.status === "concluido" ? "pending" : "unknown");
+
+    return res.json({
+      orderId,
+      verified: paymentData !== null,
+      paid,
+      status,
+      amount: paymentData?.amount ?? null,
+      paid_amount: paymentData?.paid_amount ?? null,
+      installments: paymentData?.installments ?? null,
+      capture_method: paymentData?.capture_method ?? null,
+      receipt_url: req.query.receipt_url || null,
+    });
+  } catch (err) {
+    console.error("Erro em GET /api/pedido:", err);
+    return res.status(err.status || 500).json({
+      error:
+        "Não foi possível verificar o status do pedido. Guarde o número do pedido e entre em contato com o suporte.",
     });
   }
 });

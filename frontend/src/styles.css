@@ -1347,3 +1347,81 @@ a { color: inherit; }
 @media (max-width: 640px) {
   .site-footer-copy { padding-bottom: 100px; }
 }
+
+/* ─── PAGAMENTO CONCLUÍDO ─── */
+
+/* Ícone de loading — gira continuamente */
+@keyframes pc-spin { to { transform: rotate(360deg); } }
+.pc-spin { animation: pc-spin 1s linear infinite; display: block; }
+
+/* Ícone colorido de loading (neutro) e erro */
+.pc-loading-icon { color: var(--muted) !important; }
+.pc-error-icon   { color: var(--danger) !important; }
+
+/* Caixa de detalhes do pagamento */
+.pc-summary-box {
+  width: 100%;
+  max-width: 360px;
+  margin: 0 auto 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pc-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+  color: var(--text-dim);
+}
+
+.pc-summary-row strong { color: var(--text); font-weight: 600; }
+
+.pc-summary-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 2px 0;
+}
+
+.pc-summary-total {
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.pc-summary-total strong {
+  font-weight: 700;
+  color: var(--green-bright);
+  font-size: 1.1rem;
+}
+
+/* Referência do pedido no estado de erro */
+.pc-order-ref {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 24px;
+  padding: 14px 24px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+}
+
+.pc-order-ref span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.pc-order-ref strong {
+  font-size: 0.95rem;
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  word-break: break-all;
+}

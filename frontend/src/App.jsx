@@ -1,10 +1,13 @@
 import {
+	AlertCircle,
 	ArrowLeft,
 	Check,
 	CheckCircle2,
 	ChevronRight,
 	Copy,
 	CreditCard,
+	ExternalLink,
+	Loader2,
 	Lock,
 	Minus,
 	Moon,
@@ -237,7 +240,17 @@ function AnimatedPage({ view, children }) {
    APP
 ══════════════════════════════════════════════════════ */
 export default function App() {
-	const [view, setView] = useState('catalog');
+	const [view, setView] = useState(() => {
+		const path = window.location.pathname;
+		const params = new URLSearchParams(window.location.search);
+		if (
+			path === '/pagamento-concluido' ||
+			(params.has('pedido') && params.has('status'))
+		) {
+			return 'pagamento-concluido';
+		}
+		return 'catalog';
+	});
 	const [selectedProduct, setProduct] = useState(null);
 	const [cart, setCart] = useState([]);
 	const [paymentResult, setResult] = useState(null);
@@ -369,6 +382,12 @@ export default function App() {
 						<ConfirmationView
 							result={paymentResult}
 							onNew={resetAll}
+							className="fade-in"
+						/>
+					)}
+					{view === 'pagamento-concluido' && (
+						<PagamentoConcluido
+							onBack={resetAll}
 							className="fade-in"
 						/>
 					)}
@@ -1474,6 +1493,173 @@ function ConfirmationView({ result, onNew, className }) {
 						<PackageCheck size={16} /> Novo pedido
 					</button>
 				</div>
+			</div>
+		</div>
+	);
+}
+
+/* ══════════════════════════════════════════════════════
+   PAGAMENTO CONCLUÍDO
+   Exibida quando o usuário retorna do checkout InfinitePay.
+   URL: /pagamento-concluido?pedido=AASIAM-...&status=concluido
+        &transaction_nsu=...&slug=...&receipt_url=...
+══════════════════════════════════════════════════════ */
+function PagamentoConcluido({ onBack, className }) {
+	const [state, setState]   = useState('loading'); // 'loading' | 'success' | 'error'
+	const [pedido, setPedido] = useState(null);
+	const [errMsg, setErrMsg] = useState('');
+
+	useEffect(() => {
+		const params  = new URLSearchParams(window.location.search);
+		const orderId = params.get('pedido');
+
+		if (!orderId) {
+			setState('error');
+			setErrMsg('Número de pedido não encontrado na URL.');
+			return;
+		}
+
+		// Repassa todos os params extras que a InfinitePay devolve no redirect
+		const qs = new URLSearchParams();
+		['transaction_nsu', 'slug', 'receipt_url', 'status'].forEach(k => {
+			if (params.has(k)) qs.set(k, params.get(k));
+		});
+
+		fetch(`/api/pedido/${encodeURIComponent(orderId)}?${qs.toString()}`)
+			.then(async res => {
+				const data = await res.json();
+				if (!res.ok) throw new Error(data.error || 'Erro ao consultar pedido.');
+				setPedido(data);
+				// Sucesso: pago ou aguardando confirmação (pending/concluido)
+				const ok = data.paid || ['pending', 'concluido', 'approved'].includes(data.status);
+				setState(ok ? 'success' : 'error');
+				if (!ok) setErrMsg('O pagamento ainda não foi confirmado pela operadora.');
+			})
+			.catch(err => {
+				console.error('Erro ao consultar pedido:', err);
+				setState('error');
+				setErrMsg(
+					'Não foi possível confirmar seu pagamento. Guarde o número do pedido e entre em contato com o suporte.',
+				);
+			});
+	}, []);
+
+	const orderId = new URLSearchParams(window.location.search).get('pedido') ?? '—';
+
+	return (
+		<div className={`page content-pad ${className || ''}`}>
+			<div className="panel confirm-panel">
+
+				{/* ── LOADING ── */}
+				{state === 'loading' && (
+					<>
+						<div className="confirm-icon pc-loading-icon">
+							<Loader2 size={32} className="pc-spin" />
+						</div>
+						<h1>Verificando pagamento…</h1>
+						<p style={{ color: 'var(--text-dim)' }}>
+							Aguarde enquanto confirmamos seu pedido.
+						</p>
+					</>
+				)}
+
+				{/* ── SUCESSO ── */}
+				{state === 'success' && pedido && (
+					<>
+						<div className="confirm-icon">
+							<CheckCircle2 size={32} />
+						</div>
+
+						<span className="confirm-eyebrow">Pedido #{pedido.orderId}</span>
+						<h1>Pagamento confirmado!</h1>
+						<p style={{ color: 'var(--text-dim)', margin: '0 0 24px' }}>
+							Seu pedido foi registrado com sucesso. Em breve você receberá
+							a confirmação.
+						</p>
+
+						{/* Detalhes do pagamento (quando disponíveis via verificarPagamento) */}
+						{(pedido.paid_amount != null || pedido.amount != null) && (
+							<div className="pc-summary-box">
+								{pedido.capture_method && (
+									<div className="pc-summary-row">
+										<span>Método</span>
+										<strong>
+											{pedido.capture_method === 'credit' ? 'Cartão de Crédito' :
+											 pedido.capture_method === 'debit'  ? 'Cartão de Débito'  :
+											 pedido.capture_method === 'pix'    ? 'Pix'               :
+											 pedido.capture_method}
+										</strong>
+									</div>
+								)}
+								{pedido.installments > 1 && (
+									<div className="pc-summary-row">
+										<span>Parcelas</span>
+										<strong>{pedido.installments}x</strong>
+									</div>
+								)}
+								<div className="pc-summary-divider" />
+								<div className="pc-summary-row pc-summary-total">
+									<span>Total pago</span>
+									<strong>
+										{currency.format(pedido.paid_amount ?? pedido.amount ?? 0)}
+									</strong>
+								</div>
+							</div>
+						)}
+
+						<div className="confirm-actions">
+							{pedido.receipt_url && (
+								<a
+									className="btn btn-ghost btn-sm"
+									href={pedido.receipt_url}
+									target="_blank"
+									rel="noreferrer"
+								>
+									<ExternalLink size={15} /> Ver comprovante
+								</a>
+							)}
+							<button
+								type="button"
+								className="btn btn-primary btn-sm"
+								onClick={onBack}
+							>
+								<ShoppingCart size={15} /> Voltar para a loja
+							</button>
+						</div>
+					</>
+				)}
+
+				{/* ── ERRO / NÃO CONFIRMADO ── */}
+				{state === 'error' && (
+					<>
+						<div className="confirm-icon pc-error-icon">
+							<AlertCircle size={32} />
+						</div>
+
+						<h1 style={{ color: 'var(--text)' }}>
+							Pagamento não confirmado
+						</h1>
+						<p style={{ color: 'var(--text-dim)', margin: '0 0 16px' }}>
+							{errMsg ||
+								'Não foi possível confirmar seu pagamento. Guarde o número do pedido e entre em contato com o suporte.'}
+						</p>
+
+						<div className="pc-order-ref">
+							<span>Número do pedido</span>
+							<strong>{orderId}</strong>
+						</div>
+
+						<div className="confirm-actions">
+							<button
+								type="button"
+								className="btn btn-primary btn-sm"
+								onClick={onBack}
+							>
+								<ShoppingCart size={15} /> Voltar para a loja
+							</button>
+						</div>
+					</>
+				)}
 			</div>
 		</div>
 	);

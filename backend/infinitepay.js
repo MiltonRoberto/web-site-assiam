@@ -69,7 +69,7 @@ export async function criarLinkPagamento({ orderId, items, cliente }) {
   const payload = {
     handle,
     order_nsu: orderId,
-    redirect_url: `${appUrl}?pedido=${orderId}&status=concluido`,
+    redirect_url: `${appUrl}/pagamento-concluido?pedido=${orderId}&status=concluido`,
     webhook_url: `${apiUrl}/api/webhooks/infinitepay`,
     items: items.map((item) => ({
       quantity: item.quantity,           // inteiro
