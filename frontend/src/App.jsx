@@ -42,6 +42,7 @@ const BANNER_SLIDES = [
 
 const CATEGORIES = [
 	{ id: 'moletom', label: 'Moletom' },
+	{ id: 'camiseta', label: 'Camiseta' },
 	{ id: 'acessorios', label: 'Acessórios' },
 	{ id: 'kits', label: 'Combos' },
 ];
@@ -49,7 +50,7 @@ const CATEGORIES = [
 const CATEGORY_MAP = {
 	'moletom-verde': 'moletom',
 	'moletom-bege': 'moletom',
-	'camiseta-aasiam': 'moletom',
+	'camiseta-aasiam': 'camiseta',
 	'kit-2-moletons': 'kits',
 	'kit-moletom-caneca': 'kits',
 	'kit-completo': 'kits',
