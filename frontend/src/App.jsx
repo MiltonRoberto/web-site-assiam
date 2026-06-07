@@ -23,8 +23,8 @@ import {
 } from 'lucide-react';
 import gsap from 'gsap';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { PRODUCTS } from '../../shared/products.js';
-import { createEmptySelection } from '../../shared/order.js';
+import { PRODUCTS } from './shared/products.js';
+import { createEmptySelection } from './shared/order.js';
 
 /* ─── constants ─── */
 const currency = new Intl.NumberFormat('pt-BR', {

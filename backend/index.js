@@ -4,11 +4,13 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { google } from "googleapis";
-import { calculateOrder, sanitizeSelection } from "../shared/order.js";
+import { calculateOrder, sanitizeSelection } from "./shared/order.js";
 import { criarLinkPagamento, verificarPagamento } from "./infinitepay.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// Em produção (Render), o frontend já é servido pela Vercel.
+// Em dev local, serve o dist/ gerado pelo build do frontend.
 const rootDir = path.resolve(__dirname, "..");
 
 const app = express();
@@ -251,12 +253,15 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
   }
 });
 
-const distDir = path.join(rootDir, "dist");
-app.use(express.static(distDir));
-
-app.get("/{*splat}", (_req, res) => {
-  res.sendFile(path.join(distDir, "index.html"));
-});
+// frontend/dist quando rodando a partir de backend/ (estrutura reorganizada)
+const distDir = path.join(rootDir, "frontend", "dist");
+if (process.env.NODE_ENV !== "production") {
+  // Em dev local, serve o build do frontend se existir
+  app.use(express.static(distDir));
+  app.get("/{*splat}", (_req, res) => {
+    res.sendFile(path.join(distDir, "index.html"));
+  });
+}
 
 app.listen(port, () => {
   console.log(`API AASIAM rodando em http://localhost:${port}`);
