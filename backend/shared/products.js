@@ -94,7 +94,12 @@ export const PRODUCTS = [
 		sizes: HOODIE_SIZES,
 		defaultHoodieVariant: 'verde',
 		defaultHoodieSize: 'M',
-		images: ['/imgs/combo-alcateia.png'],
+		images: [
+			'/imgs/combo-alcateia.png',
+			'/imgs/moletom-verde.png',
+			'/imgs/moletom-off-white.png',
+			'/imgs/copo.png',
+		],
 	},
 		{
 			id: 'caneca',
