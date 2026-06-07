@@ -131,8 +131,8 @@ export const PRODUCTS = [
 		{
 			id: 'camiseta-aasiam',
 			kind: 'quantity',
-			name: 'Camiseta AASIAM',
-			shortName: 'Camiseta',
+			name: 'Camiseta AASIAM 2026',
+			shortName: 'Camiseta 2026',
 			description: 'Camiseta oficial AASIAM — Forfan, dry-tech.',
 			priceCents: 0,
 			tag: 'Esgotado',
@@ -143,9 +143,9 @@ export const PRODUCTS = [
 		{
 			id: 'uniforme-oficial-aasiam-2025',
 			kind: 'quantity',
-			name: 'Uniforme Oficial AASIAM 2025',
-			shortName: 'Uniforme Oficial',
-			description: 'Uniforme oficial AASIAM 2025.',
+			name: 'Camiseta AASIAM 2025',
+			shortName: 'Camiseta 2025',
+			description: 'Camiseta oficial AASIAM 2025.',
 			priceCents: 0,
 			tag: 'Esgotado',
 			soldOut: true,
