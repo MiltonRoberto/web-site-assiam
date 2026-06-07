@@ -49,6 +49,7 @@ const CATEGORIES = [
 const CATEGORY_MAP = {
 	'moletom-verde': 'moletom',
 	'moletom-bege': 'moletom',
+	'camiseta-aasiam': 'moletom',
 	'kit-2-moletons': 'kits',
 	'kit-moletom-caneca': 'kits',
 	'kit-completo': 'kits',
@@ -709,8 +710,15 @@ function CatalogView({ onOpen, className }) {
 
 function ProductTile({ product, onOpen }) {
 	const img = product.images?.[0];
+	const soldOut = product.soldOut === true;
 	return (
-		<button type="button" className="tile" onClick={() => onOpen(product)}>
+		<button
+			type="button"
+			className={`tile${soldOut ? ' tile-sold-out' : ''}`}
+			onClick={() => !soldOut && onOpen(product)}
+			disabled={soldOut}
+			aria-disabled={soldOut}
+		>
 			<div className="tile-media">
 				{img ? (
 					<img src={img} alt={product.name} />
@@ -719,14 +727,24 @@ function ProductTile({ product, onOpen }) {
 						<ShoppingBag size={48} />
 					</div>
 				)}
-				<span className="tile-tag">{product.tag}</span>
+				{soldOut ? (
+					<span className="tile-badge-sold-out">Esgotado</span>
+				) : (
+					<span className="tile-tag">{product.tag}</span>
+				)}
 			</div>
 			<div className="tile-name">{product.name}</div>
 			<div className="tile-foot">
-				<span className="tile-price">{fmt(product.priceCents)}</span>
-				<span className="tile-cta">
-					Ver <ChevronRight size={14} />
-				</span>
+				{soldOut ? (
+					<span className="tile-price tile-price-sold-out">Esgotado</span>
+				) : (
+					<>
+						<span className="tile-price">{fmt(product.priceCents)}</span>
+						<span className="tile-cta">
+							Ver <ChevronRight size={14} />
+						</span>
+					</>
+				)}
 			</div>
 		</button>
 	);
@@ -872,29 +890,41 @@ function DetailView({ product, onBack, onAdd, onBuyNow, className }) {
 					<ProductSelectors product={product} sel={sel} onChange={set} />
 
 					<div className="detail-actions">
-						<button
-							type="button"
-							className={`btn btn-block${added ? ' btn-added' : ' btn-primary'}`}
-							onClick={handleAdd}
-						>
-							{added ? (
-								<>
-									<Check size={17} /> Adicionado
-								</>
-							) : (
-								<>
-									<ShoppingCart size={17} /> Adicionar ao carrinho
-								</>
-							)}
-						</button>
+						{product.soldOut ? (
+							<button
+								type="button"
+								className="btn btn-block btn-sold-out"
+								disabled
+							>
+								Esgotado
+							</button>
+						) : (
+							<>
+								<button
+									type="button"
+									className={`btn btn-block${added ? ' btn-added' : ' btn-primary'}`}
+									onClick={handleAdd}
+								>
+									{added ? (
+										<>
+											<Check size={17} /> Adicionado
+										</>
+									) : (
+										<>
+											<ShoppingCart size={17} /> Adicionar ao carrinho
+										</>
+									)}
+								</button>
 
-						<button
-							type="button"
-							className="btn btn-buy-now btn-block"
-							onClick={handleBuyNow}
-						>
-							<Zap size={16} /> Comprar agora
-						</button>
+								<button
+									type="button"
+									className="btn btn-buy-now btn-block"
+									onClick={handleBuyNow}
+								>
+									<Zap size={16} /> Comprar agora
+								</button>
+							</>
+						)}
 					</div>
 
 					<div className="pay-badges">

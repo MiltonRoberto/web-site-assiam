@@ -129,6 +129,18 @@ export const PRODUCTS = [
 			images: ['/imgs/mochila-estampa.png'],
 		},
 		{
+			id: 'camiseta-aasiam',
+			kind: 'quantity',
+			name: 'Camiseta AASIAM',
+			shortName: 'Camiseta',
+			description: 'Camiseta oficial AASIAM — Forfan, dry-tech.',
+			priceCents: 0,
+			tag: 'Esgotado',
+			soldOut: true,
+			accent: '#12c86b',
+			images: ['/imgs/camiseta-aasiam.png'],
+		},
+		{
 			id: 'manta',
 			kind: 'quantity',
 			name: 'Manta AASIAM',

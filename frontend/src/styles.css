@@ -475,6 +475,44 @@ a { color: inherit; }
   white-space: nowrap;
 }
 
+/* ── Badge "Esgotado" no card — mesma posição e forma que .tile-tag ── */
+.tile-badge-sold-out {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 5px 11px;
+  border-radius: var(--r-pill);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 0.63rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  backdrop-filter: blur(6px);
+  white-space: nowrap;
+}
+
+/* Card esgotado: imagem dessaturada, cursor padrão */
+.tile-sold-out { cursor: default; }
+.tile-sold-out .tile-media img { filter: grayscale(60%) opacity(0.7); }
+.tile-sold-out .tile-media { background: var(--panel-2); }
+
+/* Preço substituído por texto "Esgotado" */
+.tile-price-sold-out {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+/* Botão "Esgotado" na página de detalhe */
+.btn-sold-out {
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 .tile-name {
   font-weight: 600;
   font-size: 0.98rem;
