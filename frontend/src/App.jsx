@@ -1628,7 +1628,7 @@ function PagamentoConcluido({ onBack, className }) {
 											Parabéns,{' '}
 											<strong style={{ color: 'var(--grass-11)' }}>{nome}</strong>!
 											{' '}Você acabou de adquirir {itensTexto} da Atlética de Sistemas
-											da UFSM. Entraremos em contato assim que os itens estiverem
+											da AMF. Entraremos em contato assim que os itens estiverem
 											prontos para entrega.
 										</>
 									);
