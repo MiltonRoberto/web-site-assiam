@@ -717,6 +717,8 @@ function CatalogView({ onOpen, className }) {
 function ProductTile({ product, onOpen }) {
 	const img = product.images?.[0];
 	const soldOut = product.soldOut === true;
+	// Combos (têm lista `includes`) não exibem badge de texto sobreposto na imagem
+	const isCombo = Array.isArray(product.includes) && product.includes.length > 0;
 	return (
 		<button
 			type="button"
@@ -735,7 +737,7 @@ function ProductTile({ product, onOpen }) {
 				)}
 				{soldOut ? (
 					<span className="tile-badge-sold-out">Esgotado</span>
-				) : (
+				) : isCombo ? null : (
 					<span className="tile-tag">{product.tag}</span>
 				)}
 			</div>
