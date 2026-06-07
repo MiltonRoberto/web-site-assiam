@@ -15,21 +15,53 @@ const app = express();
 const port = process.env.PORT || 3333;
 const defaultGoogleSheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || "Pedidos";
 
+// Cache em memória dos pedidos recentes (orderId → { items, totalCents, customer })
+// Suficiente para a sessão atual; o webhook/planilha é a fonte de verdade persistente.
+const orderCache = new Map();
+
+// Colunas A-N (14 colunas)
+// J=Pagamento (Pix/Cartão), K=Parcelas, L=Status — atualizados pelo webhook
 const SHEET_HEADERS = [
-  "Data/Hora",
-  "Evento",
-  "ID Pedido",
-  "Nome",
-  "Telefone",
-  "Itens",
-  "Tamanho",
-  "Quantidade",
-  "Total",
-  "Pagamento",
-  "Status",
-  "Detalhe",
-  "Observacoes"
+  "Data/Hora",   // A
+  "Evento",      // B
+  "ID Pedido",   // C
+  "Nome",        // D
+  "Telefone",    // E
+  "Itens",       // F
+  "Tamanho",     // G
+  "Quantidade",  // H
+  "Total",       // I
+  "Pagamento",   // J — Pix ou Cartão (webhook)
+  "Parcelas",    // K — ex: "3x" se cartão (webhook)
+  "Status",      // L — Pendente → Pago/Recusado (webhook)
+  "Detalhe",     // M
+  "Observacoes"  // N
 ];
+
+/* ─── CORS ─── */
+// Aceita: APP_URL configurado no .env, qualquer subdomínio *.vercel.app e localhost em dev.
+const ALLOWED_ORIGINS = new Set(
+  [process.env.APP_URL, "http://localhost:5173", "http://localhost:4173"]
+    .filter(Boolean)
+    .map((o) => o.replace(/\/$/, "")) // remove barra final, se houver
+);
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const allowed =
+    !origin || // chamada server-to-server / mesmo domínio
+    ALLOWED_ORIGINS.has(origin) ||
+    /^https:\/\/[\w-]+\.vercel\.app$/.test(origin);
+
+  if (allowed) {
+    res.setHeader("Access-Control-Allow-Origin", origin || "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Max-Age", "86400");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -87,14 +119,32 @@ app.post("/api/checkout", async (req, res) => {
       }
     });
 
+    // Armazena itens em memória para exibir na tela de confirmação
+    orderCache.set(orderId, {
+      items: order.lines.map((line) => ({
+        name: line.variant
+          ? `${line.productName} - ${line.variant}`
+          : line.productName,
+        quantity: line.quantity,
+        unitPriceCents: line.unitPriceCents,
+      })),
+      totalCents: order.totalCents,
+      customer: { name: customer.name, phone: customer.phone },
+    });
+
     appendOrderToSheet({
       orderId,
       customer,
       order,
       status: "pending"
-    }).catch((err) => {
-      console.error("Erro ao registrar na planilha:", err);
-    });
+    })
+      .then(() => console.log(`[Sheets] Pedido ${orderId} registrado na planilha.`))
+      .catch((err) => {
+        console.error(`[Sheets] Falha ao registrar pedido ${orderId}:`, err.message);
+        if (err.response?.data) {
+          console.error("[Sheets] Detalhe da API Google:", JSON.stringify(err.response.data));
+        }
+      });
 
     return res.status(201).json({ orderId, url });
   } catch (err) {
@@ -134,16 +184,21 @@ app.get("/api/pedido/:orderId", async (req, res) => {
     const paid = paymentData?.paid === true;
     const status = paymentData?.status ?? (req.query.status === "concluido" ? "pending" : "unknown");
 
+    const cached = orderCache.get(orderId) || {};
+
     return res.json({
       orderId,
       verified: paymentData !== null,
       paid,
       status,
-      amount: paymentData?.amount ?? null,
+      amount: paymentData?.amount ?? cached.totalCents ?? null,
       paid_amount: paymentData?.paid_amount ?? null,
       installments: paymentData?.installments ?? null,
       capture_method: paymentData?.capture_method ?? null,
       receipt_url: req.query.receipt_url || null,
+      items: cached.items ?? [],
+      totalCents: cached.totalCents ?? null,
+      customer: cached.customer ?? null,
     });
   } catch (err) {
     console.error("Erro em GET /api/pedido:", err);
@@ -156,26 +211,37 @@ app.get("/api/pedido/:orderId", async (req, res) => {
 
 app.post("/api/webhooks/infinitepay", async (req, res) => {
   try {
-    const { order_nsu: orderId, status, transaction_nsu, invoice_slug } = req.body || {};
+    const {
+      order_nsu: orderId,
+      status,
+      transaction_nsu,
+      invoice_slug,
+      capture_method,
+      installments
+    } = req.body || {};
+
+    console.log("[Webhook] InfinitePay recebido:", JSON.stringify(req.body));
 
     if (!orderId) {
       return res.sendStatus(200);
     }
 
     const detail = [
-      transaction_nsu && `transaction_nsu: ${transaction_nsu}`,
-      invoice_slug && `slug: ${invoice_slug}`
-    ]
-      .filter(Boolean)
-      .join(", ");
+      transaction_nsu && `nsu: ${transaction_nsu}`,
+      invoice_slug    && `slug: ${invoice_slug}`
+    ].filter(Boolean).join(", ");
 
-    await appendOrderToSheet({
-      event: "Atualizacao webhook",
+    updateOrderInSheet({
       orderId,
-      customer: { name: "", phone: "" },
-      order: { lines: [], totalAmount: 0, totalCents: 0, totalQuantity: 0 },
-      status: status || "webhook",
+      status:        status || "webhook",
+      captureMethod: capture_method,
+      installments:  Number(installments) || 0,
       detail
+    }).catch((err) => {
+      console.error(`[Sheets] Falha ao atualizar pedido ${orderId} via webhook:`, err.message);
+      if (err.response?.data) {
+        console.error("[Sheets] Detalhe da API Google:", JSON.stringify(err.response.data));
+      }
     });
 
     res.sendStatus(200);
@@ -215,6 +281,7 @@ async function appendOrderToSheet({
   notes = ""
 }) {
   if (!isGoogleSheetsConfigured()) {
+    console.warn("[Sheets] Integração com Google Sheets não configurada — pulando registro.");
     return { enabled: false, status: "not_configured" };
   }
 
@@ -228,27 +295,30 @@ async function appendOrderToSheet({
 
   const itemSummary = summarizeOrderLines(order.lines || []);
   const statusLabel = resolvePaymentStatus(status);
-  const detailText = detail || notes;
+  const detailText  = detail || notes;
 
+  // 14 colunas A-N
+  // Pagamento (J) e Parcelas (K) ficam vazios — serão preenchidos pelo webhook
   const row = [
-    formatDateTime(),
-    event,
-    orderId,
-    customer.name,
-    customer.phone,
-    itemSummary.items,
-    itemSummary.sizes,
-    order.totalQuantity || "",
-    order.totalAmount || "",
-    "InfinitePay",
-    statusLabel,
-    detailText,
-    customer.notes || ""
+    formatDateTime(),        // A — Data/Hora
+    event,                   // B — Evento
+    orderId,                 // C — ID Pedido
+    customer.name,           // D — Nome
+    customer.phone,          // E — Telefone
+    itemSummary.items,       // F — Itens (ex: "1x Moletom Verde\n2x Caneca")
+    itemSummary.sizes,       // G — Tamanho
+    order.totalQuantity || "",// H — Quantidade total
+    order.totalAmount || "", // I — Total (reais)
+    "",                      // J — Pagamento (webhook preenche)
+    "",                      // K — Parcelas  (webhook preenche)
+    statusLabel,             // L — Status
+    detailText,              // M — Detalhe
+    customer.notes || ""     // N — Observações
   ];
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${quoteSheetName(sheetName)}!A:M`,
+    range: `${quoteSheetName(sheetName)}!A:N`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [row] }
   });
@@ -279,10 +349,18 @@ async function ensureSheetExists(sheets, spreadsheetId, sheetName) {
 async function ensureSheetHeader(sheets, spreadsheetId, sheetName) {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${quoteSheetName(sheetName)}!A1`
+    range: `${quoteSheetName(sheetName)}!A1:N1`
   });
 
-  if (res.data.values?.length) return;
+  const currentHeaders = res.data.values?.[0] || [];
+
+  // Grava/atualiza o cabeçalho se estiver ausente ou desatualizado (ex: migração de 13 → 14 colunas)
+  const needsUpdate =
+    currentHeaders.length === 0 ||
+    currentHeaders.length !== SHEET_HEADERS.length ||
+    !SHEET_HEADERS.every((h, i) => currentHeaders[i] === h);
+
+  if (!needsUpdate) return;
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
@@ -290,21 +368,84 @@ async function ensureSheetHeader(sheets, spreadsheetId, sheetName) {
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [SHEET_HEADERS] }
   });
+  console.log("[Sheets] Cabeçalho da planilha atualizado.");
+}
+
+/**
+ * Encontra a linha do pedido na planilha (busca orderId na coluna C)
+ * e atualiza as colunas J (Pagamento), K (Parcelas), L (Status), M (Detalhe).
+ */
+async function updateOrderInSheet({ orderId, status, captureMethod, installments, detail }) {
+  if (!isGoogleSheetsConfigured()) return;
+
+  const auth = createGoogleAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  const sheetName = defaultGoogleSheetName;
+
+  // Lê toda a coluna C para localizar o orderId
+  const colC = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${quoteSheetName(sheetName)}!C:C`
+  });
+
+  const rows = colC.data.values || [];
+  const rowIndex = rows.findIndex((r) => r[0] === orderId);
+
+  if (rowIndex === -1) {
+    console.warn(`[Sheets] Pedido ${orderId} não encontrado na planilha (webhook ignorado para atualização).`);
+    return;
+  }
+
+  const sheetRow = rowIndex + 1; // índice 1-based do Google Sheets
+
+  const pagamento = resolveCaptureMethod(captureMethod);
+  const parcelas  = captureMethod === "pix"
+    ? "—"
+    : installments > 1
+      ? `${installments}x`
+      : "1x";
+  const statusLabel = resolvePaymentStatus(status);
+
+  // Atualiza colunas J, K, L, M da linha encontrada
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: "USER_ENTERED",
+      data: [
+        { range: `${quoteSheetName(sheetName)}!J${sheetRow}`, values: [[pagamento]] },
+        { range: `${quoteSheetName(sheetName)}!K${sheetRow}`, values: [[parcelas]]  },
+        { range: `${quoteSheetName(sheetName)}!L${sheetRow}`, values: [[statusLabel]] },
+        { range: `${quoteSheetName(sheetName)}!M${sheetRow}`, values: [[detail || ""]] }
+      ]
+    }
+  });
+
+  console.log(`[Sheets] Pedido ${orderId} atualizado (linha ${sheetRow}): ${statusLabel} | ${pagamento} | ${parcelas}`);
+}
+
+function resolveCaptureMethod(method) {
+  const map = {
+    pix:         "Pix",
+    credit_card: "Cartão",
+    debit_card:  "Débito"
+  };
+  return map[method] || method || "";
 }
 
 function resolvePaymentStatus(status) {
   const map = {
-    approved: "Aprovado",
-    paid: "Pago",
-    pending: "Pendente",
+    approved:   "Pago",
+    paid:       "Pago",
+    pending:    "Pendente",
     in_process: "Em análise",
-    rejected: "Recusado",
-    cancelled: "Cancelado",
-    refunded: "Reembolsado",
-    webhook: "Webhook recebido",
-    unknown: "—"
+    rejected:   "Recusado",
+    cancelled:  "Cancelado",
+    refunded:   "Reembolsado",
+    concluido:  "Pendente",
+    unknown:    "Pendente"
   };
-  return map[status] || status || "—";
+  return map[status] || status || "Pendente";
 }
 
 function formatDateTime() {
@@ -341,7 +482,7 @@ function isGoogleSheetsConfigured() {
 function summarizeOrderLines(lines) {
   if (!lines.length) return { items: "", sizes: "" };
   return {
-    items: lines.map((line) => line.productName).join("\n"),
+    items: lines.map((line) => `${line.quantity}x ${line.productName}`).join("\n"),
     sizes: lines.map(formatSizeForSheet).join("\n")
   };
 }

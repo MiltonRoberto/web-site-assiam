@@ -33,6 +33,10 @@ const currency = new Intl.NumberFormat('pt-BR', {
 });
 const fmt = cents => currency.format(cents / 100);
 
+// Em dev o Vite proxy redireciona /api → localhost:3333.
+// Em produção (Vercel) VITE_API_URL aponta para o backend no Render.
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+
 const BANNER_SLIDES = [
 	{ src: '/imgs/anuncio.png', alt: 'AASIAM – Nova Coleção' },
 	{ src: '/imgs/combo-alcateia.png', alt: 'Combo Alcateia' },
@@ -1274,7 +1278,7 @@ function CheckoutView({ cart, onBack, onResult, className }) {
 		setLoading(true);
 		try {
 			const selection = cartToSelection(cart);
-			const res = await fetch('/api/checkout', {
+			const res = await fetch(`${API_BASE}/api/checkout`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ customer, selection }),
@@ -1556,7 +1560,7 @@ function PagamentoConcluido({ onBack, className }) {
 			if (params.has(k)) qs.set(k, params.get(k));
 		});
 
-		fetch(`/api/pedido/${encodeURIComponent(orderId)}?${qs.toString()}`)
+		fetch(`${API_BASE}/api/pedido/${encodeURIComponent(orderId)}?${qs.toString()}`)
 			.then(async res => {
 				const data = await res.json();
 				if (!res.ok) throw new Error(data.error || 'Erro ao consultar pedido.');
@@ -1604,8 +1608,43 @@ function PagamentoConcluido({ onBack, className }) {
 						<span className="confirm-eyebrow">Pedido #{pedido.orderId}</span>
 						<h1>Pagamento confirmado!</h1>
 						<p style={{ color: 'var(--text-dim)', margin: '0 0 24px' }}>
-							Seu pedido foi registrado com sucesso. Em breve você receberá
-							a confirmação.
+							{(() => {
+								const nome = pedido.customer?.name
+									? pedido.customer.name.split(' ')[0]
+									: null;
+
+								const itensTexto = (() => {
+									const itens = pedido.items;
+									if (!Array.isArray(itens) || itens.length === 0) return null;
+									const partes = itens.map(it => `${it.quantity}x ${it.name}`);
+									if (partes.length === 1) return partes[0];
+									if (partes.length === 2) return `${partes[0]} e ${partes[1]}`;
+									return `${partes.slice(0, -1).join(', ')} e ${partes[partes.length - 1]}`;
+								})();
+
+								if (nome && itensTexto) {
+									return (
+										<>
+											Parabéns,{' '}
+											<strong style={{ color: 'var(--grass-11)' }}>{nome}</strong>!
+											{' '}Você acabou de adquirir {itensTexto} da Atlética de Sistemas
+											da UFSM. Entraremos em contato assim que os itens estiverem
+											prontos para entrega.
+										</>
+									);
+								}
+								if (nome) {
+									return (
+										<>
+											Parabéns,{' '}
+											<strong style={{ color: 'var(--grass-11)' }}>{nome}</strong>!
+											{' '}Seu pedido foi registrado com sucesso. Entraremos em contato
+											assim que os itens estiverem prontos para entrega.
+										</>
+									);
+								}
+								return 'Seu pedido foi registrado com sucesso. Em breve você receberá a confirmação.';
+							})()}
 						</p>
 
 						{/* Detalhes do pagamento (quando disponíveis via verificarPagamento) */}
@@ -1632,8 +1671,26 @@ function PagamentoConcluido({ onBack, className }) {
 								<div className="pc-summary-row pc-summary-total">
 									<span>Total pago</span>
 									<strong>
-										{currency.format(pedido.paid_amount ?? pedido.amount ?? 0)}
+										{fmt(pedido.paid_amount ?? pedido.amount ?? 0)}
 									</strong>
+								</div>
+							</div>
+						)}
+
+						{/* Itens do pedido */}
+						{Array.isArray(pedido.items) && pedido.items.length > 0 && (
+							<div className="pc-summary-box" style={{ marginTop: '1rem' }}>
+								<p style={{ margin: '0 0 0.5rem', fontWeight: 600, fontSize: '0.85rem', opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Itens do pedido</p>
+								{pedido.items.map((item, i) => (
+									<div key={i} className="pc-summary-row" style={{ fontSize: '0.9rem' }}>
+										<span>{item.quantity}× {item.name}</span>
+										<strong>{fmt(item.unitPriceCents * item.quantity)}</strong>
+									</div>
+								))}
+								<div className="pc-summary-divider" />
+								<div className="pc-summary-row pc-summary-total">
+									<span>Total</span>
+									<strong>{fmt(pedido.totalCents ?? pedido.items.reduce((acc, i) => acc + i.unitPriceCents * i.quantity, 0))}</strong>
 								</div>
 							</div>
 						)}

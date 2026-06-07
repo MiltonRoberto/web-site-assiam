@@ -36,6 +36,7 @@ Thumbs.db
 *.json
 !package.json
 !package-lock.json
+!vercel.json
 
 # Claude Code internos
 .claude/

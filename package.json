@@ -11,7 +11,6 @@
     "start": "node backend/index.js"
   },
   "dependencies": {
-    "@mercadopago/sdk-react": "^1.0.7",
     "@radix-ui/colors": "^3.0.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
