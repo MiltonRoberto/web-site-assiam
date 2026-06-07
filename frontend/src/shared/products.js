@@ -72,7 +72,11 @@ export const PRODUCTS = [
 		sizes: HOODIE_SIZES,
 		defaultVerdeSize: 'M',
 		defaultBegeSize: 'M',
-		images: ['imgs/combo-essencial.png'],
+		images: [
+			'imgs/combo-essencial.png',
+			'/imgs/moletom-verde.png',
+			'/imgs/moletom-off-white.png',
+		],
 	},
 		{
 			id: 'kit-moletom-caneca',
