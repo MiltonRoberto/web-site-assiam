@@ -45,8 +45,8 @@ const BANNER_SLIDES = [
 ];
 
 const CATEGORIES = [
-	{ id: 'moletom', label: 'Moletom' },
-	{ id: 'camiseta', label: 'Camiseta' },
+	{ id: 'moletom', label: 'Moletons' },
+	{ id: 'camiseta', label: 'Camisetas' },
 	{ id: 'acessorios', label: 'Acessórios' },
 	{ id: 'kits', label: 'Combos' },
 ];

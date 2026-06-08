@@ -32,7 +32,7 @@ export const PRODUCTS = [
 		{
 			id: 'moletom-verde',
 			kind: 'sizedVariants',
-			name: 'Moletom Verde AASIAM',
+			name: 'Moletom Verde',
 			shortName: 'Moletom Verde',
 			description:
 				'Visual clássico e versátil, com a identidade da Alcateia estampada no peito. Conforto, estilo e orgulho de representar a AASIAM.',
@@ -46,7 +46,7 @@ export const PRODUCTS = [
 		{
 			id: 'moletom-bege',
 			kind: 'sizedVariants',
-			name: 'Moletom Off-white AASIAM',
+			name: 'Moletom Off-white',
 			shortName: 'Moletom Off-white',
 			description:
 				'Peça exclusiva com arte do lobo da Alcateia nas costas, representando força, união e pertencimento à AASIAM. Ideal para quem quer se destacar.',
@@ -104,7 +104,7 @@ export const PRODUCTS = [
 		{
 			id: 'caneca',
 			kind: 'quantity',
-			name: 'Caneca + tirante AASIAM',
+			name: 'Caneca com tirante',
 			shortName: 'Caneca',
 			description:
 				'Kit exclusivo da AASIAM que reúne uma caneca temática e um tirante personalizado, ideal para representar a Alcateia em qualquer momento.',
@@ -116,7 +116,7 @@ export const PRODUCTS = [
 		{
 			id: 'mochila-listras',
 			kind: 'quantity',
-			name: 'Mochila Alcateia Listras',
+			name: 'Mochila com Listras',
 			shortName: 'Mochila Listras',
 			description:
 					'Mochila esportiva exclusiva da AASIAM. As três listras verdes homenageiam a antiga camisa da Atlética, trazendo história e identidade para um modelo leve e versátil.',
@@ -128,7 +128,7 @@ export const PRODUCTS = [
 		{
 			id: 'mochila-estampa',
 			kind: 'quantity',
-			name: 'Mochila Alcateia Estampa',
+			name: 'Mochila com Estampa',
 			shortName: 'Mochila Estampa',
 			description:
 					'Modelo exclusivo com estampa de lobos em tom sobre tom, combinando identidade, estilo e funcionalidade para representar a Alcateia em qualquer ocasião.',
@@ -164,10 +164,10 @@ export const PRODUCTS = [
 		{
 			id: 'manta',
 			kind: 'quantity',
-			name: 'Manta AASIAM',
+			name: 'Cachecol',
 			shortName: 'Manta',
 			description:
-					'Manta oficial da AASIAM, desenvolvido para demonstrar orgulho e pertencimento. Perfeito para eventos, competições e momentos de integração da Atlética.',
+					'Cachecol oficial da AASIAM, desenvolvido para demonstrar orgulho e pertencimento. Perfeito para eventos, competições e momentos de integração da Atlética.',
 		priceCents: 5000,
 		tag: 'Conforto',
 		accent: '#213a2c',
@@ -179,7 +179,7 @@ export const PRODUCTS = [
 			name: 'Combo Alpha',
 			shortName: 'Combo Completo',
 			description:
-				'O Combo Alpha é a opção mais completa da Coleção Alcateia. Reunindo moletom, caneca com tirante, mochila e manta, este kit foi desenvolvido para quem quer carregar a identidade da AASIAM em todos os momentos. Um combo exclusivo que combina utilidade, conforto e pertencimento, ideal para os membros mais engajados da alcateia.',
+				'O Combo Alpha é a opção mais completa da Coleção Alcateia. Reunindo moletom, caneca com tirante, mochila e cachecol, este kit foi desenvolvido para quem quer carregar a identidade da AASIAM em todos os momentos. Um combo exclusivo que combina utilidade, conforto e pertencimento, ideal para os membros mais engajados da alcateia.',
 		priceCents: 27000,
 		tag: 'Todos os itens',
 		accent: '#18f08a',
