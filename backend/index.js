@@ -708,15 +708,18 @@ function isGoogleSheetsConfigured() {
 function summarizeOrderLines(lines) {
   if (!lines.length) return { items: "", sizes: "" };
   return {
-    items: lines.map((line) => `${line.quantity}x ${line.productName}`).join("\n"),
+    items: lines.map((line) => {
+      const base = `${line.quantity}x ${line.productName}`;
+      return line.variant ? `${base} | ${line.variant}` : base;
+    }).join("\n"),
     sizes: lines.map(formatSizeForSheet).join("\n")
   };
 }
 
 function formatSizeForSheet(line) {
   if (!line.variant) return "—";
-  const sizeMatch = line.variant.match(/Tam\.\s*([A-Z0-9]+)/i);
-  if (sizeMatch) return sizeMatch[1];
+  const matches = [...line.variant.matchAll(/Tam\.\s*([A-Z0-9]+)/gi)];
+  if (matches.length) return matches.map((m) => m[1]).join(" / ");
   return line.variant;
 }
 
