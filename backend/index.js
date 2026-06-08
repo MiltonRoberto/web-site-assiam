@@ -206,6 +206,77 @@ app.get("/api/test-sheets", async (_req, res) => {
   }
 });
 
+/* ─── TEST PLANILHA PEDIDO ─── */
+// Rota de diagnóstico local — simula um pedido completo e chama appendOrderToSheet diretamente.
+// NÃO usar em produção. Acesse: GET /api/test-planilha-pedido
+app.get("/api/test-planilha-pedido", async (_req, res) => {
+  const testOrderId = `AASIAM-TEST-${Date.now()}`;
+
+  const testOrder = {
+    lines: [
+      {
+        productId: "moletom-verde",
+        productName: "Moletom Verde AASIAM",
+        variant: "Verde - Tam. M",
+        variantCode: "verde-M",
+        quantity: 1,
+        unitPriceCents: 15000,
+        totalCents: 15000,
+      },
+      {
+        productId: "moletom-bege",
+        productName: "Moletom Off-white AASIAM",
+        variant: "Off-white - Tam. G",
+        variantCode: "bege-G",
+        quantity: 2,
+        unitPriceCents: 15000,
+        totalCents: 30000,
+      },
+    ],
+    totalCents: 45000,
+    totalAmount: 450.00,
+    totalQuantity: 3,
+  };
+
+  const testCustomer = {
+    name: "Teste Local",
+    phone: "(51) 99999-9999",
+    notes: "Pedido gerado pela rota /api/test-planilha-pedido",
+  };
+
+  console.log(`[test-planilha-pedido] Iniciando teste com pedido ${testOrderId}`);
+
+  try {
+    const result = await appendOrderToSheet({
+      event: "Teste Local",
+      orderId: testOrderId,
+      customer: testCustomer,
+      order: testOrder,
+      statusLabel: "Teste",
+      captureMethod: "pix",
+      installments: 0,
+      detail: "linha de teste via /api/test-planilha-pedido",
+    });
+
+    console.log(`[test-planilha-pedido] Sucesso:`, result);
+    return res.json({
+      ok: true,
+      orderId: testOrderId,
+      result,
+      message: "Linha de teste inserida na planilha com sucesso.",
+    });
+  } catch (err) {
+    console.error("[test-planilha-pedido] ERRO:", err.message);
+    console.error("[test-planilha-pedido] Stack:", err.stack);
+    return res.status(500).json({
+      ok: false,
+      error: err.message,
+      stack: err.stack,
+      detail: err.response?.data || null,
+    });
+  }
+});
+
 /* ─── CUPONS ─── */
 // Valida um cupom sem marcá-lo como usado. Não expõe a lista de cupons.
 app.post("/api/validar-cupom", (req, res) => {
@@ -463,6 +534,18 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
     };
 
     console.log(`[Sheets] Escrevendo pedido ${orderId} com status ${statusLabel}`);
+    console.log("[Sheets] Dados passados para appendOrderToSheet:", JSON.stringify({
+      event: "Pagamento webhook",
+      orderId,
+      customer,
+      orderLines: order?.lines?.length ?? 0,
+      orderTotalAmount: order?.totalAmount,
+      orderTotalQuantity: order?.totalQuantity,
+      statusLabel,
+      captureMethod,
+      installments,
+      detail,
+    }));
 
     try {
       await appendOrderToSheet({
@@ -485,6 +568,7 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
       }
     } catch (err) {
       console.error(`[Sheets] ERRO ao escrever pedido ${orderId}: ${err.message}`);
+      console.error(`[Sheets] Stack: ${err.stack}`);
       if (err.response?.data) {
         console.error("[Sheets] Detalhe da API Google:", JSON.stringify(err.response.data));
       }
@@ -537,6 +621,9 @@ async function appendOrderToSheet({
   installments = 0,
   detail = "",
 }) {
+  console.log(`[appendOrderToSheet] Iniciando para pedido ${orderId}`);
+  console.log(`[appendOrderToSheet] order.lines (${order?.lines?.length ?? 0} itens):`, JSON.stringify(order?.lines));
+
   if (!isGoogleSheetsConfigured()) {
     console.warn("[Sheets] Integração com Google Sheets não configurada — pulando registro.");
     return { enabled: false, status: "not_configured" };
