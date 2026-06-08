@@ -77,9 +77,19 @@ function normalizeQty(v) {
 	return !Number.isFinite(q) || q < 0 ? 0 : Math.min(q, 99);
 }
 
-function cartTotals(cart) {
+function cartTotals(cart, cupomAplicado = false) {
 	const subtotal = cart.reduce((t, i) => t + i.unitCents * i.qty, 0);
-	return { subtotal, total: subtotal };
+	if (!cupomAplicado) return { subtotal, total: subtotal, discount: 0 };
+	const totalComDesconto = cart.reduce((t, i) => {
+		const product = PRODUCTS.find(p => p.id === i.productId);
+		const custo = product?.costCents ?? i.unitCents;
+		return t + custo * i.qty;
+	}, 0);
+	return {
+		subtotal,
+		total: totalComDesconto,
+		discount: subtotal - totalComDesconto,
+	};
 }
 
 function cartToSelection(cart) {
@@ -264,6 +274,7 @@ export default function App() {
 	const [theme, setTheme] = useState(
 		() => localStorage.getItem('aasiam-theme') || 'dark',
 	);
+	const [appliedCupom, setAppliedCupom] = useState(null);
 
 	/* apply theme class to <html> */
 	useEffect(() => {
@@ -371,6 +382,8 @@ export default function App() {
 							onRemove={removeItem}
 							onShop={() => go('catalog')}
 							onCheckout={() => go('checkout')}
+							appliedCupom={appliedCupom}
+							onApplyCupom={setAppliedCupom}
 							className="fade-in"
 						/>
 					)}
@@ -382,6 +395,7 @@ export default function App() {
 								setResult(r);
 								go('confirmation');
 							}}
+							appliedCupom={appliedCupom}
 							className="fade-in"
 						/>
 					)}
@@ -1128,8 +1142,42 @@ function SizePills({ sizes, value, onChange }) {
 /* ══════════════════════════════════════════════════════
    CART VIEW
 ══════════════════════════════════════════════════════ */
-function CartView({ cart, onQty, onRemove, onShop, onCheckout, className }) {
-	const t = cartTotals(cart);
+function CartView({ cart, onQty, onRemove, onShop, onCheckout, appliedCupom, onApplyCupom, className }) {
+	const [cupomInput, setCupomInput] = useState(appliedCupom?.codigo || '');
+	const [cupomLoading, setCupomLoading] = useState(false);
+	const [cupomMsg, setCupomMsg] = useState(appliedCupom ? 'success' : '');
+
+	const t = cartTotals(cart, !!appliedCupom);
+
+	async function handleAplicarCupom() {
+		const codigo = cupomInput.trim();
+		if (!codigo) return;
+		setCupomLoading(true);
+		setCupomMsg('');
+		try {
+			const res = await fetch(`${API_BASE}/api/validar-cupom`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ codigo }),
+			});
+			const data = await res.json();
+			if (data.valido) {
+				onApplyCupom({ codigo });
+				setCupomMsg('success');
+			} else if (data.motivo === 'ja_utilizado') {
+				onApplyCupom(null);
+				setCupomMsg('used');
+			} else {
+				onApplyCupom(null);
+				setCupomMsg('invalid');
+			}
+		} catch {
+			onApplyCupom(null);
+			setCupomMsg('invalid');
+		} finally {
+			setCupomLoading(false);
+		}
+	}
 
 	return (
 		<div className={`page content-pad ${className || ''}`}>
@@ -1168,6 +1216,38 @@ function CartView({ cart, onQty, onRemove, onShop, onCheckout, className }) {
 								onRemove={onRemove}
 							/>
 						))}
+
+						<div className="cupom-section">
+							<div className="cupom-row">
+								<input
+									className="input cupom-input"
+									placeholder="Código do cupom"
+									value={cupomInput}
+									onChange={e => setCupomInput(e.target.value)}
+									onKeyDown={e => e.key === 'Enter' && handleAplicarCupom()}
+									disabled={cupomLoading}
+								/>
+								<button
+									type="button"
+									className="btn btn-ghost btn-sm cupom-btn"
+									onClick={handleAplicarCupom}
+									disabled={cupomLoading || !cupomInput.trim()}
+								>
+									{cupomLoading ? <Loader2 size={15} className="pc-spin" /> : 'Aplicar'}
+								</button>
+							</div>
+							{cupomMsg === 'success' && (
+								<p className="cupom-msg cupom-msg-ok">
+									<Check size={14} /> Cupom aplicado! Preço de associado ativado.
+								</p>
+							)}
+							{cupomMsg === 'used' && (
+								<p className="cupom-msg cupom-msg-err">Este cupom já foi utilizado.</p>
+							)}
+							{cupomMsg === 'invalid' && (
+								<p className="cupom-msg cupom-msg-err">Cupom inválido.</p>
+							)}
+						</div>
 					</div>
 
 					<aside className="panel summary">
@@ -1175,8 +1255,18 @@ function CartView({ cart, onQty, onRemove, onShop, onCheckout, className }) {
 						<div className="summary-rows">
 							<div className="summary-row">
 								<span>Subtotal</span>
-								<strong>{fmt(t.subtotal)}</strong>
+								{appliedCupom ? (
+									<strong className="cupom-strike">{fmt(t.subtotal)}</strong>
+								) : (
+									<strong>{fmt(t.subtotal)}</strong>
+								)}
 							</div>
+							{appliedCupom && t.discount > 0 && (
+								<div className="summary-row cupom-discount-row">
+									<span>Desconto</span>
+									<strong>- {fmt(t.discount)}</strong>
+								</div>
+							)}
 						</div>
 						<div className="summary-divider" />
 						<div className="summary-total">
@@ -1255,7 +1345,7 @@ function Stepper({ qty, onDec, onInc }) {
    CHECKOUT VIEW
    Form: Nome, Sobrenome, E-mail, Telefone
 ══════════════════════════════════════════════════════ */
-function CheckoutView({ cart, onBack, onResult, className }) {
+function CheckoutView({ cart, onBack, onResult, appliedCupom, className }) {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState('');
 	const [submitAttempted, setSubmitAttempted] = useState(false);
@@ -1266,7 +1356,7 @@ function CheckoutView({ cart, onBack, onResult, className }) {
 		telefone: '',
 	});
 
-	const t = cartTotals(cart);
+	const t = cartTotals(cart, !!appliedCupom);
 	const emailValue = form.email.trim();
 	const fieldStatus = {
 		nome: form.nome.trim().length > 0,
@@ -1310,7 +1400,11 @@ function CheckoutView({ cart, onBack, onResult, className }) {
 			const res = await fetch(`${API_BASE}/api/checkout`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ customer, selection }),
+				body: JSON.stringify({
+					customer,
+					selection,
+					cupom: appliedCupom?.codigo || '',
+				}),
 			});
 			const data = await res.json();
 			if (!res.ok)
@@ -1478,8 +1572,18 @@ function CheckoutView({ cart, onBack, onResult, className }) {
 					<div className="summary-rows">
 						<div className="summary-row">
 							<span>Subtotal</span>
-							<strong>{fmt(t.subtotal)}</strong>
+							{appliedCupom ? (
+								<strong className="cupom-strike">{fmt(t.subtotal)}</strong>
+							) : (
+								<strong>{fmt(t.subtotal)}</strong>
+							)}
 						</div>
+						{appliedCupom && t.discount > 0 && (
+							<div className="summary-row cupom-discount-row">
+								<span>Desconto</span>
+								<strong>- {fmt(t.discount)}</strong>
+							</div>
+						)}
 					</div>
 					<div className="summary-divider" />
 					<div className="summary-total">

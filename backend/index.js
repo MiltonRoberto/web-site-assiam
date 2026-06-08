@@ -6,16 +6,73 @@ import "dotenv/config";
 
 import express from "express";
 import { google } from "googleapis";
-import { calculateOrder, sanitizeSelection } from "./shared/order.js";
+import { calculateOrder, sanitizeSelection, getProduct, centsToAmount } from "./shared/order.js";
 import { criarLinkPagamento, verificarPagamento } from "./infinitepay.js";
 
 const app = express();
 const port = process.env.PORT || 3333;
 const defaultGoogleSheetName = process.env.GOOGLE_SHEETS_SHEET_NAME || "Pedidos";
 
-// Cache em memória dos pedidos recentes (orderId → { items, totalCents, customer })
+// Cache em memória dos pedidos recentes (orderId → { items, totalCents, customer, cupom })
 // Suficiente para a sessão atual; o webhook/planilha é a fonte de verdade persistente.
 const orderCache = new Map();
+
+/* ─── CUPONS DE DESCONTO (preço de custo) ───
+   Map em memória com controle de uso. A lista nunca é exposta nas respostas. */
+function normalizeCoupon(codigo) {
+  return String(codigo || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Cupons de uso único (só podem ser usados uma vez)
+const COUPONS = new Map(
+  [
+    "Milton Roberto",
+    "Marcelo Telles",
+    "Samuel Watthier",
+    "Guilherme William",
+    "Jessika Rodrigues",
+    "Vinicius Schmidt",
+    "Gabriel Telles",
+    "Amanda Roos",
+    "Vinícios Dotto",
+  ].map((nome) => [normalizeCoupon(nome), { unlimited: false, used: false }])
+);
+// Cupom ilimitado (pode ser usado sem restrição)
+COUPONS.set(normalizeCoupon("Gabriela Minuzzi"), { unlimited: true, used: false });
+
+// Verifica disponibilidade do cupom (case-insensitive, ignora espaços extras)
+function checkCoupon(codigo) {
+  const key = normalizeCoupon(codigo);
+  if (!key || !COUPONS.has(key)) return { valido: false, motivo: "invalido" };
+  const c = COUPONS.get(key);
+  if (!c.unlimited && c.used) return { valido: false, motivo: "ja_utilizado" };
+  return { valido: true, tipo: "custo" };
+}
+
+// Marca um cupom de uso único como usado (idempotente; ilimitado nunca trava)
+function marcarCupomUsado(codigo, orderId) {
+  const key = normalizeCoupon(codigo);
+  const c = COUPONS.get(key);
+  if (!c) return false;
+  if (!c.unlimited) c.used = true;
+  console.log(`[Cupom] "${key}" marcado como usado (pedido ${orderId || "?"}).`);
+  return true;
+}
+
+// Aplica o preço de custo (costCents) a todas as linhas do pedido
+function aplicarPrecoCusto(order) {
+  for (const line of order.lines) {
+    const product = getProduct(line.productId);
+    const custo =
+      product && Number.isFinite(product.costCents)
+        ? product.costCents
+        : line.unitPriceCents;
+    line.unitPriceCents = custo;
+    line.totalCents = custo * line.quantity;
+  }
+  order.totalCents = order.lines.reduce((s, l) => s + l.totalCents, 0);
+  order.totalAmount = centsToAmount(order.totalCents);
+}
 
 // Colunas A-N (14 colunas)
 // J=Pagamento (Pix/Cartão), K=Parcelas, L=Status — atualizados pelo webhook
@@ -149,11 +206,34 @@ app.get("/api/test-sheets", async (_req, res) => {
   }
 });
 
+/* ─── CUPONS ─── */
+// Valida um cupom sem marcá-lo como usado. Não expõe a lista de cupons.
+app.post("/api/validar-cupom", (req, res) => {
+  const { codigo } = req.body || {};
+  return res.json(checkCoupon(codigo));
+});
+
+// Marca um cupom como usado. Chamada após o pagamento ser confirmado.
+app.post("/api/usar-cupom", (req, res) => {
+  const { codigo, orderId } = req.body || {};
+  const ok = marcarCupomUsado(codigo, orderId);
+  if (!ok) return res.status(404).json({ ok: false, motivo: "invalido" });
+  return res.json({ ok: true });
+});
+
 app.post("/api/checkout", async (req, res) => {
   try {
     const customer = sanitizeCustomer(req.body?.customer);
     const selection = sanitizeSelection(req.body?.selection);
     const order = calculateOrder(selection);
+
+    // Cupom: revalida no servidor; se válido e disponível, aplica preço de custo
+    const cupom = String(req.body?.cupom || "").trim();
+    const cupomValido = cupom ? checkCoupon(cupom).valido : false;
+    if (cupomValido) {
+      aplicarPrecoCusto(order);
+      console.log(`[Checkout] Cupom "${cupom}" válido — preço de custo aplicado.`);
+    }
 
     if (!customer.name) {
       return res.status(400).json({ error: "O campo nome é obrigatório." });
@@ -199,6 +279,7 @@ app.post("/api/checkout", async (req, res) => {
       order,
       customer: { name: customer.name, phone: customer.phone, notes: customer.notes },
       totalCents: order.totalCents,
+      cupom: cupomValido ? cupom : null,
     });
 
     console.log(`[Checkout] Pedido ${orderId} criado. Aguardando pagamento.`);
@@ -397,6 +478,11 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
       console.log(`[Sheets] Sucesso ao escrever pedido ${orderId}`);
       // Marca como gravado para idempotência (se o cache existir)
       if (cached) cached.written = true;
+
+      // Cupom: marca como usado somente após pagamento confirmado (status "Pago")
+      if (cached?.cupom && statusLabel === "Pago") {
+        marcarCupomUsado(cached.cupom, orderId);
+      }
     } catch (err) {
       console.error(`[Sheets] ERRO ao escrever pedido ${orderId}: ${err.message}`);
       if (err.response?.data) {

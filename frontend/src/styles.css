@@ -1501,3 +1501,46 @@ a { color: inherit; }
   letter-spacing: 0.04em;
   word-break: break-all;
 }
+
+/* ─── CUPOM DE DESCONTO ─── */
+.cupom-section {
+  border-top: 1px solid var(--line);
+  padding: 16px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cupom-row {
+  display: flex;
+  gap: 8px;
+}
+
+.cupom-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.cupom-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.cupom-msg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.84rem;
+  font-weight: 500;
+  margin: 0;
+}
+
+.cupom-msg-ok  { color: var(--green-bright); }
+.cupom-msg-err { color: var(--danger); }
+
+.cupom-strike {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
+.cupom-discount-row { color: var(--green-bright); }

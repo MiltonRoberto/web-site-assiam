@@ -203,6 +203,22 @@ export const PRODUCTS = [
 	},
 ];
 
+// Preços de custo (centavos) — aplicados quando um cupom de associado é usado
+const COST_CENTS = {
+	'moletom-verde': 13000,
+	'moletom-bege': 13000,
+	'caneca': 2800,
+	'mochila-listras': 3500,
+	'mochila-estampa': 3500,
+	'manta': 5000,
+	'kit-2-moletons': 26000,
+	'kit-moletom-caneca': 15800,
+	'kit-completo': 24300,
+};
+for (const _p of PRODUCTS) {
+	if (COST_CENTS[_p.id] != null) _p.costCents = COST_CENTS[_p.id];
+}
+
 export const PRODUCT_BY_ID = Object.fromEntries(
 	PRODUCTS.map(product => [product.id, product]),
 );
