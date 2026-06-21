@@ -1,0 +1,89 @@
+DOCUMENTO BASE RAG DA AASIAM
+
+1. Identidade da Atlética
+
+Nome oficial: Associação Atlética de Sistemas de Informação.
+
+Sigla oficial: AASIAM.
+
+Representação: A AASIAM representa o curso de Sistemas de Informação da Antônio Meneghetti Faculdade.
+
+Cidade e estado de atuação: Recanto Maestro, Rio Grande do Sul.
+
+Apelidos e nomes associados: Lobo e Alcateia.
+
+Mascote: Lobo.
+
+Finalidade principal: A AASIAM tem como finalidade principal promover eventos esportivos e a integração entre os alunos.
+
+Descrição resumida: A Associação Atlética de Sistemas de Informação, conhecida pela sigla AASIAM, representa os alunos do curso de Sistemas de Informação da Antônio Meneghetti Faculdade. A atlética atua em Recanto Maestro, no Rio Grande do Sul. Sua principal finalidade é promover eventos esportivos e fortalecer a integração entre os alunos do curso.
+
+2. Identidade visual
+
+Cores oficiais: Verde e preto.
+
+Elemento principal do logo: Lobo.
+
+Mascote oficial: Lobo.
+
+Significado do logo: Informação ainda não definida.
+
+Regras de uso da identidade visual: Tudo que envolve a identidade da atlética precisa de aprovação da diretoria.
+
+3. Organização interna
+
+Integrantes da diretoria atual: Milton, Samuel, Vinicius Dotto, Guilherme, Sofia, Marcelo, Gabriel e Arthur.
+
+Áreas ou cargos existentes: Marketing, diretoria, financeiro, produtos, esportes e eventos.
+
+Entrada na equipe ou diretoria: A entrada acontece somente quando forem abertas vagas. Quando houver vagas disponíveis, a divulgação será feita pelos canais oficiais da atlética.
+
+Decisões que precisam de aprovação: Todas as decisões relacionadas à identidade da atlética precisam de aprovação da diretoria.
+
+Representação oficial: A diretoria pode falar oficialmente em nome da atlética, principalmente o presidente e o vice-presidente.
+
+4. Atuação e atividades
+
+Modalidades e atividades esportivas: Truco, futebol, vôlei, FIFA e xadrez.
+
+Participação em competições: A atlética participa de campeonatos, jogos e competições.
+
+Produtos comercializados: A AASIAM vende camisetas, moletons, canecas, mantas e mochilas.
+
+Público autorizado a participar: A participação é aberta somente para alunos da Antônio Meneghetti Faculdade do curso de Sistemas de Informação.
+
+5. Comunicação e atendimento
+
+Canais oficiais de comunicação: Instagram e WhatsApp.
+
+Canal para dúvidas gerais: Instagram e WhatsApp.
+
+Canal para parcerias e patrocínios: Instagram e WhatsApp.
+
+Canal para entrada em modalidades esportivas: Instagram e WhatsApp.
+
+Horário de atendimento: Não há horário de atendimento definido.
+
+Prazo médio de resposta: Não há prazo médio de resposta definido.
+
+Responsáveis pelos canais: Equipe de marketing e diretoria.
+
+Tipos de mensagens que a IA deve responder: A IA deve responder dúvidas relacionadas à atlética.
+
+6. Diretrizes para a IA
+
+Escopo de resposta: A IA deve responder apenas sobre assuntos relacionados à AASIAM e à atlética.
+
+Assuntos que a IA não deve responder: A IA não deve responder nada que não seja voltado à atlética.
+
+Tom de voz: Misto, combinando clareza, organização e uma linguagem próxima dos alunos.
+
+Identidade da IA: A IA deve atuar como assistente da AASIAM.
+
+Perguntas frequentes conhecidas: As pessoas costumam perguntar sobre uniformes, produtos e preços.
+
+Conduta quando não souber responder: Informação ainda não definida.
+
+Informações privadas: Informação ainda não definida.
+
+Termos internos e gírias: Existem termos, apelidos ou gírias internas, mas a lista ainda não foi definida.

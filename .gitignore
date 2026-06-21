@@ -56,7 +56,7 @@ Thumbs.db
 ai/.env
 ai/chroma_db/*
 !ai/chroma_db/.gitkeep
-ai/docs/*
+ai/chroma_db/
 !ai/docs/.gitkeep
 __pycache__/
 *.pyc
