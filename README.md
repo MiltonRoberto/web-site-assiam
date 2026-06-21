@@ -268,37 +268,6 @@ Abra **3 terminais**:
 
 ---
 
-## Deploy em produção
-
-### Frontend → Vercel
-
-1. Importe o repositório no [vercel.com](https://vercel.com)
-2. Root directory: `frontend`
-3. Adicione as variáveis de ambiente no painel do Vercel:
-   ```
-   VITE_API_URL = https://seu-backend.onrender.com
-   VITE_AI_URL  = https://loja-aasiam-ai.onrender.com
-   ```
-4. Deploy automático a cada push no `main`
-
-### Backend + IA → Render
-
-O arquivo `ai/render.yaml` já está configurado. No painel do Render:
-
-1. New → Web Service → conecta o repositório GitHub
-2. Root directory: `ai` | Runtime: **Docker**
-3. Adiciona a variável de ambiente:
-   ```
-   GROQ_API_KEY = gsk_suachave
-   ```
-4. Deploy
-
-O build do Docker (~5-10 min) baixa o modelo de embeddings, indexa os documentos de `ai/docs/` e bake o ChromaDB na imagem. Ao subir o container, a IA já está pronta para responder.
-
-> Para atualizar os documentos da IA em produção: edite os arquivos em `ai/docs/`, faça push — o Render reconstrói a imagem automaticamente.
-
----
-
 ## Endpoints do serviço de IA
 
 | Método | Rota | Descrição |
