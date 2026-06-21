@@ -221,6 +221,19 @@ const CSS = `
     background: var(--green);
     border: 2px solid var(--bg);
   }
+
+  @media (max-width: 640px) {
+    /* Sobe acima do bottom nav fixo (~70px) */
+    .cw-fab {
+      bottom: 82px;
+      right: 12px;
+    }
+    /* Janela ocupa quase toda a largura da tela */
+    .cw-window {
+      width: calc(100vw - 24px);
+      height: min(460px, calc(100dvh - 200px));
+    }
+  }
 `
 
 export default function ChatWidget() {
