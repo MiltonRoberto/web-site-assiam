@@ -348,7 +348,7 @@ app.post("/api/checkout", async (req, res) => {
         unitPriceCents: line.unitPriceCents,
       })),
       order,
-      customer: { name: customer.name, phone: customer.phone, notes: customer.notes },
+      customer: { name: customer.name, phone: customer.phone, email: customer.email, notes: customer.notes },
       totalCents: order.totalCents,
       cupom: cupomValido ? cupom : null,
     });
@@ -375,9 +375,19 @@ app.get("/api/pedido/:orderId", async (req, res) => {
       return res.status(400).json({ error: "orderId é obrigatório." });
     }
 
+    const cached = orderCache.get(orderId) || {};
     let paymentData = null;
 
-    if (transaction_nsu && slug) {
+    if (isMockPaymentRequest(req.query)) {
+      paymentData = {
+        paid: true,
+        status: "approved",
+        amount: cached.totalCents ?? null,
+        paid_amount: cached.totalCents ?? null,
+        installments: 1,
+        capture_method: req.query.capture_method || "pix",
+      };
+    } else if (transaction_nsu && slug) {
       try {
         paymentData = await verificarPagamento({
           orderId,
@@ -392,8 +402,6 @@ app.get("/api/pedido/:orderId", async (req, res) => {
 
     const paid = paymentData?.paid === true;
     const status = paymentData?.status ?? (req.query.status === "concluido" ? "concluido" : "unknown");
-
-    const cached = orderCache.get(orderId) || {};
 
     // capture_method e transaction_id vêm da URL de redirect da InfinitePay como fallback
     const captureMethod = paymentData?.capture_method ?? req.query.capture_method ?? null;
@@ -431,7 +439,14 @@ app.get("/api/pedido/:orderId/status", async (req, res) => {
   try {
     let paymentData = null;
 
-    if (transaction_nsu && slug) {
+    if (isMockPaymentRequest(req.query)) {
+      paymentData = {
+        paid: true,
+        status: "approved",
+        capture_method: req.query.capture_method || "pix",
+        installments: 1,
+      };
+    } else if (transaction_nsu && slug) {
       try {
         paymentData = await verificarPagamento({
           orderId,
@@ -460,6 +475,79 @@ app.get("/api/pedido/:orderId/status", async (req, res) => {
     console.error(`[Status] Erro em GET /api/pedido/${orderId}/status:`, err);
     return res.status(500).json({ error: "Não foi possível verificar o status do pedido." });
   }
+});
+
+app.get("/api/mock/pay/:orderId", async (req, res) => {
+  if (process.env.MOCK_PAYMENT_ENABLED !== "true") {
+    return res.status(404).json({ error: "Mock de pagamento desativado." });
+  }
+
+  const { orderId } = req.params;
+  const cached = orderCache.get(orderId);
+
+  if (!cached) {
+    return res.status(404).json({ error: "Pedido mock nao encontrado no cache local." });
+  }
+
+  const captureMethod = req.query.capture_method || "pix";
+  const statusLabel = req.query.status === "refused" ? "Recusado" : "Pago";
+  const installments = 1;
+  const transactionNsu = `mock-${Date.now()}`;
+  const invoiceSlug = "mock-local";
+  const detail = `mock local, nsu: ${transactionNsu}, slug: ${invoiceSlug}`;
+  const customer = cached.customer || { name: "", phone: "", email: "", notes: "" };
+  const order = cached.order || { lines: [], totalAmount: "", totalQuantity: "" };
+
+  if (!cached.written) {
+    try {
+      await appendOrderToSheet({
+        event: "Pagamento mock local",
+        orderId,
+        customer,
+        order,
+        statusLabel,
+        captureMethod,
+        installments,
+        detail,
+      });
+      cached.written = true;
+    } catch (err) {
+      console.error(`[MockPayment] Erro ao registrar pedido ${orderId} na planilha: ${err.message}`);
+    }
+  }
+
+  if (!cached.n8nEmailNotified) {
+    const notified = await notifyN8nOrderEmail({
+      orderId,
+      customer,
+      order,
+      statusLabel,
+      captureMethod,
+      installments,
+      detail,
+      payment: {
+        transactionNsu,
+        invoiceSlug,
+        amountCents: cached.totalCents,
+        rawStatus: "mock-approved",
+      },
+    });
+
+    if (notified) {
+      cached.n8nEmailNotified = true;
+    }
+  }
+
+  const fallbackRedirect = `${(process.env.APP_URL || "http://localhost:5173").replace(/\/$/, "")}/pagamento-concluido`;
+  const redirectBase = String(req.query.redirect || fallbackRedirect);
+  const redirectUrl = new URL(redirectBase);
+  redirectUrl.searchParams.set("pedido", orderId);
+  redirectUrl.searchParams.set("status", "concluido");
+  redirectUrl.searchParams.set("transaction_nsu", transactionNsu);
+  redirectUrl.searchParams.set("slug", invoiceSlug);
+  redirectUrl.searchParams.set("capture_method", captureMethod);
+
+  return res.redirect(302, redirectUrl.toString());
 });
 
 app.post("/api/webhooks/infinitepay", async (req, res) => {
@@ -505,10 +593,10 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
       return;
     }
 
-    // Idempotência: evita gravar a mesma confirmação duas vezes (InfinitePay reenvia webhooks)
+    // Idempotencia: evita repetir planilha/e-mail quando a InfinitePay reenvia webhooks.
     const cached = orderCache.get(orderId);
-    if (cached?.written) {
-      console.log(`[Webhook] Pedido ${orderId} já registrado anteriormente — ignorando reenvio.`);
+    if (cached?.written && cached?.n8nEmailNotified) {
+      console.log(`[Webhook] Pedido ${orderId} ja registrado e notificado anteriormente; ignorando reenvio.`);
       return;
     }
 
@@ -522,11 +610,11 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
     const detail = [
       transactionNsu && `nsu: ${transactionNsu}`,
       invoiceSlug    && `slug: ${invoiceSlug}`,
-      !cached        && "cache indisponível (dados parciais)"
+      !cached        && "cache indisponivel (dados parciais)"
     ].filter(Boolean).join(", ");
 
-    // Se o cache foi perdido (ex: reinício do Render), grava com os dados disponíveis no webhook
-    const customer = cached?.customer || { name: "", phone: "", notes: "" };
+    // Se o cache foi perdido (ex: reinicio do Render), grava com os dados disponiveis no webhook
+    const customer = cached?.customer || { name: "", phone: "", email: "", notes: "" };
     const order    = cached?.order || {
       lines: [],
       totalAmount: amountCents ? amountCents / 100 : "",
@@ -547,9 +635,39 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
       detail,
     }));
 
-    try {
-      await appendOrderToSheet({
-        event: "Pagamento webhook",
+    if (!cached?.written) {
+      try {
+        await appendOrderToSheet({
+          event: "Pagamento webhook",
+          orderId,
+          customer,
+          order,
+          statusLabel,
+          captureMethod,
+          installments,
+          detail,
+        });
+        console.log(`[Sheets] Sucesso ao escrever pedido ${orderId}`);
+        // Marca como gravado para idempotencia (se o cache existir)
+        if (cached) cached.written = true;
+
+        // Cupom: marca como usado somente apos pagamento confirmado (status "Pago")
+        if (cached?.cupom && statusLabel === "Pago") {
+          marcarCupomUsado(cached.cupom, orderId);
+        }
+      } catch (err) {
+        console.error(`[Sheets] ERRO ao escrever pedido ${orderId}: ${err.message}`);
+        console.error(`[Sheets] Stack: ${err.stack}`);
+        if (err.response?.data) {
+          console.error("[Sheets] Detalhe da API Google:", JSON.stringify(err.response.data));
+        }
+      }
+    } else {
+      console.log(`[Sheets] Pedido ${orderId} ja registrado anteriormente; pulando planilha.`);
+    }
+
+    if (!cached?.n8nEmailNotified) {
+      const notified = await notifyN8nOrderEmail({
         orderId,
         customer,
         order,
@@ -557,20 +675,16 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
         captureMethod,
         installments,
         detail,
+        payment: {
+          transactionNsu,
+          invoiceSlug,
+          amountCents,
+          rawStatus,
+        },
       });
-      console.log(`[Sheets] Sucesso ao escrever pedido ${orderId}`);
-      // Marca como gravado para idempotência (se o cache existir)
-      if (cached) cached.written = true;
 
-      // Cupom: marca como usado somente após pagamento confirmado (status "Pago")
-      if (cached?.cupom && statusLabel === "Pago") {
-        marcarCupomUsado(cached.cupom, orderId);
-      }
-    } catch (err) {
-      console.error(`[Sheets] ERRO ao escrever pedido ${orderId}: ${err.message}`);
-      console.error(`[Sheets] Stack: ${err.stack}`);
-      if (err.response?.data) {
-        console.error("[Sheets] Detalhe da API Google:", JSON.stringify(err.response.data));
+      if (cached && notified) {
+        cached.n8nEmailNotified = true;
       }
     }
   } catch (err) {
@@ -609,6 +723,137 @@ function sanitizeCustomer(customer = {}) {
     email: cleanText(customer.email, 120).toLowerCase(),
     notes: cleanText(customer.notes, 500)
   };
+}
+
+function isMockPaymentRequest(query = {}) {
+  if (process.env.MOCK_PAYMENT_ENABLED !== "true") return false;
+  return (
+    String(query.slug || "") === "mock-local" ||
+    String(query.transaction_nsu || "").startsWith("mock-")
+  );
+}
+
+async function notifyN8nOrderEmail({
+  orderId,
+  customer,
+  order,
+  statusLabel,
+  captureMethod,
+  installments,
+  detail,
+  payment,
+}) {
+  const webhookUrl = process.env.N8N_ORDER_EMAIL_WEBHOOK_URL;
+
+  if (!webhookUrl) {
+    console.log("[n8n] N8N_ORDER_EMAIL_WEBHOOK_URL nao configurado; e-mail do pedido nao sera enviado.");
+    return false;
+  }
+
+  if (!customer?.email) {
+    console.warn(`[n8n] Pedido ${orderId} sem e-mail do cliente; notificacao ignorada.`);
+    return false;
+  }
+
+  const payload = {
+    source: "loja-aasiam",
+    orderId,
+    customer,
+    order: {
+      ...order,
+      lines: order?.lines || [],
+    },
+    statusLabel,
+    captureMethod,
+    installments,
+    detail,
+    payment,
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(process.env.N8N_WEBHOOK_SECRET
+          ? { "X-AASIAM-Webhook-Secret": process.env.N8N_WEBHOOK_SECRET }
+          : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.error(`[n8n] Falha ao notificar pedido ${orderId}: HTTP ${response.status} ${body}`);
+      return sendMockMailpitEmail({ orderId, customer, order, statusLabel });
+    }
+
+    console.log(`[n8n] Pedido ${orderId} enviado para fluxo de e-mail.`);
+    return true;
+  } catch (err) {
+    console.error(`[n8n] Erro ao notificar pedido ${orderId}: ${err.message}`);
+    return sendMockMailpitEmail({ orderId, customer, order, statusLabel });
+  }
+}
+
+async function sendMockMailpitEmail({ orderId, customer, order, statusLabel }) {
+  if (process.env.MOCK_PAYMENT_ENABLED !== "true") return false;
+
+  const mailpitUrl = process.env.MAILPIT_SEND_URL || "http://localhost:8025/api/v1/send";
+  const itemList = (order?.lines || []).length
+    ? order.lines
+        .map((line) => {
+          const variant = line.variant ? ` (${line.variant})` : "";
+          return `- ${line.quantity}x ${line.productName}${variant}`;
+        })
+        .join("\n")
+    : "- Itens nao disponiveis";
+  const total = typeof order?.totalAmount === "number"
+    ? order.totalAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+    : String(order?.totalAmount || "");
+  const subject = statusLabel === "Pago"
+    ? `Pedido ${orderId} confirmado - AASIAM`
+    : `Atualizacao do pedido ${orderId} - AASIAM`;
+  const text = [
+    `Ola, ${customer.name || "cliente"}.`,
+    "",
+    `Recebemos uma atualizacao do seu pedido ${orderId}.`,
+    `Status: ${statusLabel}.`,
+    `Total: ${total}.`,
+    "",
+    "Itens:",
+    itemList,
+    "",
+    "AASIAM",
+  ].join("\n");
+
+  try {
+    const response = await fetch(mailpitUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        From: { Email: "pedidos@aasiam.local", Name: "Loja AASIAM" },
+        To: [{ Email: customer.email, Name: customer.name || customer.email }],
+        Subject: subject,
+        Text: text,
+        HTML: `<p>${text.replace(/\n/g, "<br>")}</p>`,
+        Tags: ["aasiam", "pedido-mock", "backend-fallback"],
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.error(`[Mailpit] Falha ao enviar e-mail mock do pedido ${orderId}: HTTP ${response.status} ${body}`);
+      return false;
+    }
+
+    console.log(`[Mailpit] E-mail mock do pedido ${orderId} enviado para ${customer.email}.`);
+    return true;
+  } catch (err) {
+    console.error(`[Mailpit] Erro ao enviar e-mail mock do pedido ${orderId}: ${err.message}`);
+    return false;
+  }
 }
 
 async function appendOrderToSheet({

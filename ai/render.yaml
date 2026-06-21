@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: loja-aasiam-ai
+    runtime: docker
+    rootDir: ai
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CHROMA_PATH
+        value: ./chroma_db
+      - key: DOCS_PATH
+        value: ./docs

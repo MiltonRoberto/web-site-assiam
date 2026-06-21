@@ -1,0 +1,12 @@
+fastapi==0.115.0
+pydantic-settings==2.6.1
+uvicorn[standard]==0.30.6
+langchain==0.3.7
+langchain-community==0.3.7
+langchain-groq==0.2.1
+langchain-chroma==0.1.4
+chromadb==0.5.18
+pymupdf==1.24.14
+python-dotenv==1.0.1
+python-multipart==0.0.12
+fastembed==0.4.2

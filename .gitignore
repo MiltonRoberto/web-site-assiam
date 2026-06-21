@@ -50,6 +50,19 @@ Thumbs.db
 !frontend/vercel.json
 !backend/package.json
 !backend/package-lock.json
+!n8n/workflows/*.json
+
+# ── Serviço AI ────────────────────────────────────────────────────
+ai/.env
+ai/chroma_db/*
+!ai/chroma_db/.gitkeep
+ai/docs/*
+!ai/docs/.gitkeep
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+ai/.venv/
 
 # ── Claude Code / Codex internos ──────────────────────────────────
 .claude/

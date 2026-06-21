@@ -66,6 +66,15 @@ export async function criarLinkPagamento({ orderId, items, cliente }) {
   const appUrl = (process.env.APP_URL || "http://localhost:5173").replace(/\/$/, "");
   const apiUrl = (process.env.API_URL || "http://localhost:3333").replace(/\/$/, "");
 
+  if (process.env.MOCK_PAYMENT_ENABLED === "true") {
+    const redirectUrl = new URL(`${apiUrl}/api/mock/pay/${encodeURIComponent(orderId)}`);
+    redirectUrl.searchParams.set("status", "paid");
+    redirectUrl.searchParams.set("capture_method", "pix");
+    redirectUrl.searchParams.set("redirect", `${appUrl}/pagamento-concluido`);
+    console.log(`[MockPayment] Link local criado para pedido ${orderId}: ${redirectUrl.toString()}`);
+    return { url: redirectUrl.toString() };
+  }
+
   const webhookUrl = `${apiUrl}/api/webhooks/infinitepay`;
 
   // Log de diagnóstico — confirma o destino do webhook enviado à InfinitePay

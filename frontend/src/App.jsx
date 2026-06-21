@@ -22,6 +22,7 @@ import {
 	Zap,
 } from 'lucide-react';
 import gsap from 'gsap';
+import ChatWidget from './ChatWidget';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { PRODUCTS } from './shared/products.js';
 import { createEmptySelection } from './shared/order.js';
@@ -421,6 +422,7 @@ export default function App() {
 					Desenvolvido por Arthur Zanon, Marcelo Telles e Milton Bortolanza.
 				</p>
 			</footer>
+			<ChatWidget />
 		</div>
 	);
 }
