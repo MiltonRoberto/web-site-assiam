@@ -692,6 +692,24 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
   }
 });
 
+/* ─── GUARDRAILS — filtragem no proxy antes de encaminhar à IA ──────────────
+   Mesma lógica do guardrails.py, aplicada aqui no backend.
+   Garante proteção mesmo enquanto o serviço de IA está em cold start ou
+   rodando uma versão antiga.                                              */
+const _GR_BYPASS_VERBS = /\b(ignor[ae]|esque[cç]a?|desconsider[ae]|abandone?|desative?|remova?|override|bypass|disable|remove|forget|neglect|disregard|drop)\b/i;
+const _GR_BYPASS_NOUNS = /\b(instru[cç][oõ]es?|regras?|anteriore?s?|pr[eé]vias?|previous|prompt|sistema|system|guidelines?|constraints?|filtros?|contexto|context)\b/i;
+const _GR_EXTRACT_VERBS = /\b(escreva?|revele?|mostre?|repita|diga|fale|conte?|liste?|cite|copie?|imprima?|exiba?|retorne?|envie?|mande?|manda|passa?|write|reveal|show|tell|repeat|print|output|display|send)\b/i;
+const _GR_EXTRACT_TARGETS = /\b(prompt|instru[cç][oõ]es?|regras?|sistema|system|inicial|original|secret|segredo|confidencial)\b/i;
+const _GR_JAILBREAK = /\b(roleplay|jailbreak|DAN)\b|modo\s+(deus|god|dev|irrestrito)/i;
+const _GR_INJECTION_REPLY = "Não consigo seguir esse tipo de instrução. Estou aqui para responder sobre a AASIAM e seus produtos! 🐺";
+
+function isInjection(text) {
+  if (_GR_BYPASS_VERBS.test(text) && _GR_BYPASS_NOUNS.test(text)) return true;
+  if (_GR_EXTRACT_VERBS.test(text) && _GR_EXTRACT_TARGETS.test(text)) return true;
+  if (_GR_JAILBREAK.test(text)) return true;
+  return false;
+}
+
 /* ─── PROXY SEGURO PARA O SERVIÇO DE IA ───────────────────────────────────
    O browser nunca fala diretamente com a IA.
    A AI_API_KEY fica só no servidor — nunca exposta ao cliente.           */
@@ -699,6 +717,14 @@ app.post("/api/perguntar", async (req, res) => {
   const { pergunta } = req.body || {};
   if (!pergunta || typeof pergunta !== "string") {
     return res.status(400).json({ error: "Pergunta obrigatória." });
+  }
+
+  // Guardrail no proxy: bloqueia injeções antes de encaminhar à IA
+  if (pergunta.trim().length > 500) {
+    return res.json({ resposta: "Pergunta muito longa (máximo 500 caracteres). Por favor, seja mais breve!" });
+  }
+  if (isInjection(pergunta)) {
+    return res.json({ resposta: _GR_INJECTION_REPLY });
   }
 
   const aiUrl = process.env.AI_URL;
