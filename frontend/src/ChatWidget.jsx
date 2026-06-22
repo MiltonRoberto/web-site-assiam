@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 
 const AI_URL = import.meta.env.VITE_AI_URL || 'http://localhost:8000'
+const AI_KEY = import.meta.env.VITE_AI_KEY || ''
 
 /* ─── Estilos escopados — usa os tokens do design system ──────────────────
    --panel, --panel-2, --field, --line, --line-strong
@@ -261,7 +262,7 @@ export default function ChatWidget() {
     try {
       const res  = await fetch(`${AI_URL}/perguntar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(AI_KEY && { 'X-API-Key': AI_KEY }) },
         body: JSON.stringify({ pergunta }),
       })
       const data = await res.json()
