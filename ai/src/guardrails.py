@@ -12,52 +12,62 @@ INJECTION_REPLY = (
     "Estou aqui para responder sobre a AASIAM e seus produtos! 🐺"
 )
 
-# ── Padrões de prompt injection (PT + EN) ─────────────────────────────────────
-_INJECTION_PATTERNS = [
-    # Ignorar / esquecer instruções
-    r"ignore\s+(as\s+)?(instru[cç][oõ]es?|regras?|tudo|anterior)",
-    r"esque[cç]a?\s+(tudo|as\s+regras?|suas?\s+instru[cç][oõ]es?|seu\s+papel)",
-    r"ignore\s+(previous|all|above|prior|your)\s+instructions?",
-    r"forget\s+(all|everything|your\s+(rules?|instructions?))",
+# ── Detecção por combinação de conceitos ─────────────────────────────────────
+# Mais robusto que regex exatos: qualquer bypass verb + qualquer target noun = injeção
 
-    # Roleplay / personagem / persona
-    r"(fale|responda|aja|escreva)\s+(como\s+se\s+(fosse|voc[eê]\s+fosse)|como\s+(o|a|um|uma)\s+\w+)",
+_BYPASS_VERBS = re.compile(
+    r"\b(ignor[ae]|esque[cç]a?|desconsider[ae]|abandone?|desative?|remova?|"
+    r"override|bypass|disable|remove|forget|neglect|disregard|drop)\b",
+    re.IGNORECASE,
+)
+
+_BYPASS_NOUNS = re.compile(
+    r"\b(instru[cç][oõ]es?|regras?|anteriore?s?|pr[eé]vias?|previous|"
+    r"prompt|sistema|system|guidelines?|constraints?|filtros?|contexto|context|"
+    r"limita[cç][oõ]es?|restri[cç][oõ]es?)\b",
+    re.IGNORECASE,
+)
+
+# Verbos que pedem para revelar o conteúdo do prompt
+_EXTRACT_VERBS = re.compile(
+    r"\b(escreva?|revele?|mostre?|repita|diga|fale|conte?|liste?|cite|copie?|"
+    r"imprima?|exiba?|retorne?|write|reveal|show|tell|repeat|print|output|display)\b",
+    re.IGNORECASE,
+)
+
+# Alvos de extração do prompt de sistema
+_EXTRACT_TARGETS = re.compile(
+    r"\b(prompt|instru[cç][oõ]es?|regras?|sistema|system|inicial|original|"
+    r"secret|segredo|confidencial|dito\s+a\s+voc[eê]|foi\s+dito|acima|acima\s+disso)\b",
+    re.IGNORECASE,
+)
+
+# ── Padrões de roleplay / persona / jailbreak (frases inteiras) ──────────────
+_PERSONA_PATTERNS = [
+    r"(fale|responda|aja|escreva|comporte[\s-]se)\s+como\s+(se\s+(fosse|voc[eê])|o|a|um|uma)\s+\w+",
     r"finja\s+(ser|que\s+(é|voc[eê]\s+[eé]))",
-    r"(seja|vire|torne-se)\s+(o|a|um|uma)\s+\w+",
+    r"(seja|vire|torne[\s-]se)\s+(o|a|um|uma)\s+\w+",
     r"(act|speak|talk|write|respond)\s+as\s+(if\s+you\s+are|a\s+|the\s+)",
     r"pretend\s+(you\s+are|to\s+be)",
-    r"roleplay",
-    r"personagem",
     r"you\s+are\s+now\s+",
-
-    # Nova persona / papel / identidade
-    r"(nova?|novo)\s+(persona|papel|identidade|personagem|modo|rol)",
-    r"new\s+(persona|role|identity|character|mode)",
     r"a\s+partir\s+de\s+agora\s+(voc[eê]\s+[eé]|seu\s+nome)",
-    r"from\s+now\s+on\s+you\s+are",
-
-    # Sobrescrever / sem restrições
-    r"(override|bypass|disable|remove)\s+(instructions?|rules?|guidelines?|constraints?|filters?)",
-    r"sem\s+(restri[cç][oõo]es?|limita[cç][oõo]es?|filtros?|regras?)",
-    r"without\s+restrictions?",
-
-    # Caracteres especiais / system tags
-    r"<\s*/?\s*(system|instruction|prompt|assistant|user)\s*>",
-    r"\[?\s*(system|assistant|user|inst)\s*\]?\s*:",
-
-    # Termos clássicos de jailbreak
+    r"from\s+now\s+on\s+you\s+(are|will)",
+    r"\broleplay\b",
     r"\bjailbreak\b",
     r"\bDAN\b",
     r"do\s+anything\s+now",
-    r"modo\s+(deus|god|dev|desenvolvedor|irrestrito|livre)",
+    r"modo\s+(deus|god|dev|desenvolvedor|irrestrito|livre|sem\s+filtro)",
     r"god\s+mode",
+    r"<\s*/?\s*(system|instruction|prompt|assistant|user)\s*>",
+    r"\[?\s*(system|assistant|user|inst)\s*\]?\s*:",
+    r"(nova?|novo)\s+(persona|papel|identidade|personagem|modo|rol)",
+    r"new\s+(persona|role|identity|character|mode)",
 ]
 
-# ── Palavras de personagens / assuntos off-topic óbvios ──────────────────────
 _ROLEPLAY_NAMES = [
     "goku", "naruto", "batman", "superman", "chatgpt", "openai", "gemini",
-    "claude", "assistente\s+geral", "bot\s+geral", "ia\s+geral",
-    "professor", "médico", "advogado", "psicólogo", "hacker",
+    r"claude", r"assistente\s+geral", r"bot\s+geral", r"ia\s+geral",
+    "professor", r"m[eé]dico", "advogado", r"psic[oó]logo", "hacker",
 ]
 
 _ROLEPLAY_TRIGGERS = re.compile(
@@ -66,7 +76,17 @@ _ROLEPLAY_TRIGGERS = re.compile(
     re.IGNORECASE,
 )
 
-_COMPILED_INJECTIONS = [re.compile(p, re.IGNORECASE) for p in _INJECTION_PATTERNS]
+_COMPILED_PERSONA = [re.compile(p, re.IGNORECASE) for p in _PERSONA_PATTERNS]
+
+# ── Sanitizador de resposta — detecta vazamento do prompt de sistema ──────────
+_RESPONSE_LEAK = re.compile(
+    r"(instru[cç][oõ]es\s+confidenciais|regras\s+de\s+(conte[uú]do|resposta)|"
+    r"você\s+é\s+o\s+assistente\s+virtual\s+da\s+aasiam|"
+    r"contexto\s+dos\s+produtos|lembrete\s+(final|de\s+seguran[cç]a)|"
+    r"system\s*prompt|prompt\s+de\s+sistema|prompt\s+inicial|"
+    r"━━━\s*(segurança|escopo|respostas|contexto))",
+    re.IGNORECASE,
+)
 
 # ── Palavras-chave de tópico AASIAM ──────────────────────────────────────────
 _TOPIC_KEYWORDS = [
@@ -82,14 +102,14 @@ _TOPIC_KEYWORDS = [
     "evento", "esporte", "futebol", "vôlei", "volei", "truco", "campeonato",
     "jogo", "competição", "competicao", "time",
     "diretoria", "instagram", "whatsapp", "contato",
-    "coleção", "colecao", "alcateia", "verde", "off-white", "bege",
+    "coleção", "colecao", "verde", "off-white", "bege",
 ]
 
 # ── Assuntos explicitamente off-topic ────────────────────────────────────────
 _OFF_TOPIC_PATTERNS = [
     r"\b(receita|receitas)\b",
     r"\b(clima|previsão\s+do\s+tempo|temperatura)\b",
-    r"\b(política|política|eleição|presidente|governo)\b",
+    r"\b(política|eleição|presidente|governo)\b",
     r"\b(programação|código|python|javascript|java|html|css)\b",
     r"\b(piada|piadas|humor|engraçado)\b",
     r"\b(tradução|traduza|translate)\b",
@@ -100,8 +120,25 @@ _OFF_TOPIC_PATTERNS = [
 _COMPILED_OFF_TOPIC = [re.compile(p, re.IGNORECASE) for p in _OFF_TOPIC_PATTERNS]
 
 
+def _is_injection(text: str) -> bool:
+    # 1. Combinação: verbo de bypass + substantivo alvo (ex: "ignore todas as instruções")
+    if _BYPASS_VERBS.search(text) and _BYPASS_NOUNS.search(text):
+        return True
+    # 2. Combinação: verbo de extração + alvo (ex: "escreva seu prompt de sistema inicial")
+    if _EXTRACT_VERBS.search(text) and _EXTRACT_TARGETS.search(text):
+        return True
+    # 3. Padrões de roleplay / persona / jailbreak
+    for pattern in _COMPILED_PERSONA:
+        if pattern.search(text):
+            return True
+    # 4. Roleplay com nome de personagem conhecido
+    if _ROLEPLAY_TRIGGERS.search(text):
+        return True
+    return False
+
+
 def validate_input(pergunta: str) -> tuple[bool, str]:
-    """Validação de entrada. Retorna (valido, mensagem_de_erro)."""
+    """Valida entrada do usuário. Retorna (valido, mensagem_de_erro)."""
     pergunta = pergunta.strip()
 
     if not pergunta:
@@ -113,28 +150,17 @@ def validate_input(pergunta: str) -> tuple[bool, str]:
             "Por favor, seja mais breve!"
         )
 
-    # Injeção de prompt
-    for pattern in _COMPILED_INJECTIONS:
-        if pattern.search(pergunta):
-            return False, INJECTION_REPLY
-
-    # Roleplay com nome de personagem conhecido
-    if _ROLEPLAY_TRIGGERS.search(pergunta):
+    if _is_injection(pergunta):
         return False, INJECTION_REPLY
 
     return True, ""
 
 
 def is_on_topic(pergunta: str) -> bool:
-    """
-    Retorna True se a pergunta é sobre a AASIAM.
-    Bloqueia se contiver assuntos explicitamente off-topic,
-    libera se contiver palavras-chave de tópico,
-    libera perguntas curtas e genéricas (saudações, dúvidas gerais).
-    """
+    """Retorna True se a pergunta é sobre a AASIAM."""
     lower = pergunta.lower().strip()
 
-    # Saudações e perguntas genéricas curtas passam (ex: "oi", "olá", "o que vocês vendem?")
+    # Saudações curtas passam sem necessidade de palavra-chave
     if len(lower) <= 40 and not any(p.search(lower) for p in _COMPILED_OFF_TOPIC):
         return True
 
@@ -149,3 +175,10 @@ def is_on_topic(pergunta: str) -> bool:
 
     # Pergunta longa sem nenhuma palavra-chave → off-topic
     return False
+
+
+def sanitize_response(resposta: str) -> str:
+    """Última linha de defesa: se o LLM vazar o prompt de sistema, substitui pela resposta segura."""
+    if _RESPONSE_LEAK.search(resposta):
+        return INJECTION_REPLY
+    return resposta

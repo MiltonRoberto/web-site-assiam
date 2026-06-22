@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from .ingestao import ingerir
 from .agente import perguntar
-from .guardrails import validate_input, is_on_topic, OFF_TOPIC_REPLY
+from .guardrails import validate_input, is_on_topic, OFF_TOPIC_REPLY, sanitize_response
 from .ratelimit import is_allowed
 from .config import settings
 
@@ -100,6 +100,7 @@ def rota_perguntar(body: PerguntaRequest):
 
     try:
         resposta = perguntar(body.pergunta)
+        resposta = sanitize_response(resposta)
         return PerguntaResponse(resposta=resposta)
     except Exception:
         raise HTTPException(status_code=500, detail="Erro interno.")
