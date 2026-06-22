@@ -31,7 +31,8 @@ _BYPASS_NOUNS = re.compile(
 # Verbos que pedem para revelar o conteúdo do prompt
 _EXTRACT_VERBS = re.compile(
     r"\b(escreva?|revele?|mostre?|repita|diga|fale|conte?|liste?|cite|copie?|"
-    r"imprima?|exiba?|retorne?|write|reveal|show|tell|repeat|print|output|display)\b",
+    r"imprima?|exiba?|retorne?|envie?|mande?|manda|passa?|"
+    r"write|reveal|show|tell|repeat|print|output|display|send)\b",
     re.IGNORECASE,
 )
 

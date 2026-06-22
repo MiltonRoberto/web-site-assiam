@@ -10,7 +10,7 @@ Vende moletons, canecas, mochilas, cachecol e combos da Coleção Alcateia.
 A loja é composta por três serviços independentes que se comunicam via HTTP:
 
 - **Frontend**: interface da loja com carrinho, checkout e um chat de IA embutido
-- **Backend**: API que processa pedidos, gera links de pagamento (InfinitePay) e registra compras no Google Sheets
+- **Backend**: API que processa pedidos, gera links de pagamento (InfinitePay), registra compras no Google Sheets e atua como **proxy seguro** para o serviço de IA
 - **IA (RAG)**: agente de perguntas e respostas que responde sobre produtos e a atlética com base em documentos de contexto — funciona via recuperação vetorial (ChromaDB) + LLM (Groq)
 
 O chat de IA aparece como um widget 🐺 no canto inferior direito do site. O usuário digita uma pergunta, o agente busca trechos relevantes nos documentos indexados e o LLM formula a resposta. Nenhuma informação é inventada — se não estiver no contexto, o agente informa que não tem a informação.
@@ -30,28 +30,38 @@ O chat de IA aparece como um widget 🐺 no canto inferior direito do site. O us
           │   - Catálogo de produtos    │
           │   - Carrinho e checkout     │
           │   - Chat widget (IA)        │
-          └───────┬──────────┬──────────┘
-                  │          │ REST
-            REST  │          └──────────────────────┐
-                  │                                  │
-     ┌────────────▼──────────────┐    ┌─────────────▼────────────┐
-     │    Backend (Render)        │    │      IA / RAG (Render)    │
-     │    Node.js + Express       │    │    Python + FastAPI       │
-     │    - POST /checkout        │    │    - POST /perguntar      │
-     │    - GET /status/:id       │    │    - POST /ingestao       │
-     │    - Google Sheets API     │    │    - GET /health          │
-     └────────────┬───────────────┘    └─────────────┬────────────┘
-                  │                                   │
-     ┌────────────▼───────────────┐    ┌─────────────▼────────────┐
-     │      InfinitePay            │    │   ChromaDB + FastEmbed   │
-     │  (Pix / Cartão / Débito)   │    │   (banco vetorial local) │
-     └────────────────────────────┘    └──────────────────────────┘
+          └──────────────┬──────────────┘
+                         │ REST (sem chaves expostas)
+          ┌──────────────▼──────────────┐
+          │    Backend (Render)          │
+          │    Node.js + Express         │
+          │    - POST /checkout          │
+          │    - GET  /status/:id        │
+          │    - POST /api/perguntar     │  ← proxy seguro para IA
+          │    - Google Sheets API       │
+          └──────┬──────────────┬────────┘
+                 │              │ REST + X-API-Key (interno)
+   ┌─────────────▼────┐  ┌──────▼──────────────────────┐
+   │   InfinitePay     │  │      IA / RAG (Render)       │
+   │  (Pix / Cartão)  │  │   Python + FastAPI           │
+   └──────────────────┘  │   - POST /perguntar          │
+                         │   - POST /ingestao            │
+                         │   - GET  /health              │
+                         └──────────────┬────────────────┘
+                                        │
+                         ┌──────────────▼────────────────┐
+                         │   ChromaDB + FastEmbed         │
+                         │   (banco vetorial local)       │
+                         └───────────────────────────────┘
 ```
 
 ### Fluxo do agente RAG
 
 ```
 Pergunta do usuário
+       │
+       ▼
+Guardrails (Python)          ← valida, bloqueia injeções e off-topic
        │
        ▼
 FastEmbedEmbeddings          ← gera embedding da pergunta (local, ONNX)
@@ -63,8 +73,35 @@ ChromaDB (MMR retrieval)     ← busca os 5 chunks mais relevantes
 Groq LLM (llama-3.3-70b)    ← formula a resposta com base no contexto
        │
        ▼
+Sanitizador de resposta      ← bloqueia vazamento do prompt de sistema
+       │
+       ▼
 Resposta ao usuário
 ```
+
+---
+
+## Segurança
+
+### Por que o frontend não fala diretamente com a IA?
+
+O frontend chama apenas o **backend** (`/api/perguntar`), que repassa a pergunta para o serviço de IA usando uma chave secreta (`AI_API_KEY`). Essa chave **nunca chega ao browser** — nenhum segredo é exposto no DevTools.
+
+### Camadas de proteção do agente de IA
+
+| Camada | O que faz |
+|---|---|
+| **Rate limiting** | Máximo de 20 requisições/minuto por IP |
+| **API Key** | O serviço de IA só aceita chamadas do backend autenticado |
+| **CORS restrito** | Aceita apenas origens Vercel e localhost |
+| **Guardrails — injeção** | Detecta tentativas de sobrescrever instruções (ex: "ignore todas as regras") |
+| **Guardrails — extração** | Bloqueia pedidos para revelar o prompt de sistema (ex: "escreva seu prompt inicial") |
+| **Guardrails — off-topic** | Recusa perguntas fora do escopo da AASIAM |
+| **Input wrapping** | A pergunta é isolada antes de chegar ao LLM, sinalizando que é dado — não instrução |
+| **System prompt hardening** | Técnica sanduíche: regras de segurança antes e depois do contexto dos produtos |
+| **Sanitizador de resposta** | Se o LLM vazar o prompt de sistema mesmo assim, a resposta é substituída |
+| **CSP + Headers** | Content-Security-Policy, X-Frame-Options e outros headers no Vercel |
+| **Source maps desabilitados** | O bundle JS não expõe o código-fonte original |
 
 ---
 
@@ -87,23 +124,25 @@ Resposta ao usuário
 
 ```
 lojaAASIAM/
-├── frontend/            # React 18 + Vite — interface da loja e chat de IA
+├── frontend/               # React 18 + Vite — interface da loja e chat de IA
 │   ├── src/
-│   │   ├── App.jsx      # Componente principal, rotas e produtos
-│   │   ├── ChatWidget.jsx  # Widget de chat da IA
+│   │   ├── App.jsx         # Componente principal, rotas e produtos
+│   │   ├── ChatWidget.jsx  # Widget de chat (chama o backend, não a IA diretamente)
 │   │   └── ...
 │   ├── .env.example
-│   └── vercel.json
-├── backend/             # Node.js + Express — pagamentos e pedidos
-│   ├── src/
+│   └── vercel.json         # Rewrites SPA + headers de segurança (CSP, etc.)
+├── backend/                # Node.js + Express — pagamentos, pedidos e proxy de IA
+│   ├── index.js
 │   └── .env.example
-├── ai/                  # Python + FastAPI — agente RAG
-│   ├── docs/            # PDFs e TXTs de contexto da IA (adicione aqui)
+├── ai/                     # Python + FastAPI — agente RAG
+│   ├── docs/               # PDFs e TXTs de contexto (adicione aqui)
 │   ├── src/
-│   │   ├── main.py      # Rotas FastAPI
-│   │   ├── agente.py    # Chain RAG (retriever + LLM)
-│   │   ├── ingestao.py  # Indexação de documentos
-│   │   └── config.py    # Configuração via .env
+│   │   ├── main.py         # Rotas FastAPI + autenticação + rate limit
+│   │   ├── agente.py       # Chain RAG (retriever + LLM) com input wrapping
+│   │   ├── guardrails.py   # Validação de entrada e sanitização de resposta
+│   │   ├── ratelimit.py    # Rate limiting por IP (20 req/min)
+│   │   ├── ingestao.py     # Indexação de documentos no ChromaDB
+│   │   └── config.py       # Configuração via .env
 │   ├── Dockerfile
 │   ├── render.yaml
 │   └── requirements.txt
@@ -150,6 +189,7 @@ Abra `ai/.env` e preencha:
 
 ```env
 GROQ_API_KEY=gsk_suachaveaqui
+AI_API_KEY=               # deixe vazio em dev (desativa a autenticação localmente)
 ```
 
 #### 2.3 Criar o ambiente virtual e instalar dependências
@@ -176,8 +216,8 @@ Exemplos: catálogo de produtos, sobre a atlética, FAQ, regulamentos.
 #### 2.5 Subir o serviço
 
 ```bash
-# Git Bash (dentro de ai/ com venv ativo)
-.venv/Scripts/python.exe -m uvicorn src.main:app --port 8000
+# dentro de ai/ com venv ativo
+uvicorn src.main:app --port 8000
 ```
 
 Confirme: `http://localhost:8000/health` → `{"status":"ok"}`
@@ -207,6 +247,10 @@ PORT=3333
 APP_URL=http://localhost:5173/
 API_URL=http://localhost:3333/
 
+# URL do serviço de IA (local)
+AI_URL=http://localhost:8000
+AI_API_KEY=               # deixe vazio em dev
+
 # InfinitePay — handle da conta (parte final do link de pagamento)
 INFINITEPAY_HANDLE=seu_handle
 
@@ -215,9 +259,6 @@ GOOGLE_SHEETS_SPREADSHEET_ID=id_da_planilha
 GOOGLE_SHEETS_SHEET_NAME=Pedidos AASIAM
 GOOGLE_SERVICE_ACCOUNT_EMAIL=conta@projeto.iam.gserviceaccount.com
 GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-
-# Dev: simula pagamento sem redirecionar
-MOCK_PAYMENT_ENABLED=true
 ```
 
 ```bash
@@ -231,8 +272,6 @@ npm run dev
 2. Ative a **Google Sheets API**
 3. Compartilhe a planilha com o e-mail da service account
 4. O ID da planilha está na URL: `https://docs.google.com/spreadsheets/d/**ID**/edit`
-
-Valide: `http://localhost:3333/api/health` → `googleSheetsConfigured: true`
 
 ---
 
@@ -251,8 +290,9 @@ Acesse: `http://localhost:5173`
 
 | Variável | Padrão (dev) | Descrição |
 |---|---|---|
-| `VITE_API_URL` | `http://localhost:3333` | URL do backend |
-| `VITE_AI_URL` | `http://localhost:8000` | URL do serviço de IA |
+| `VITE_API_URL` | `http://localhost:3333` | URL do backend (único endpoint necessário) |
+
+> O frontend **não** se comunica diretamente com a IA. Toda chamada de chat passa pelo backend (`/api/perguntar`), que age como proxy.
 
 ---
 
@@ -262,7 +302,7 @@ Abra **3 terminais**:
 
 | Terminal | Diretório | Comando | Porta |
 |---|---|---|---|
-| IA | `ai/` | `.venv/Scripts/python.exe -m uvicorn src.main:app --port 8000` | 8000 |
+| IA | `ai/` | `uvicorn src.main:app --port 8000` | 8000 |
 | Backend | `backend/` | `npm run dev` | 3333 |
 | Frontend | `frontend/` | `npm run dev` | 5173 |
 
@@ -270,13 +310,15 @@ Abra **3 terminais**:
 
 ## Endpoints do serviço de IA
 
-| Método | Rota | Descrição |
-|---|---|---|
-| `GET` | `/health` | Verifica se o serviço está no ar |
-| `POST` | `/ingestao` | Reindexar documentos de `docs/` no ChromaDB |
-| `POST` | `/perguntar` | Enviar uma pergunta ao agente |
+> Em produção, o frontend **não chama esses endpoints diretamente**. O backend age como proxy via `POST /api/perguntar`.
 
-**Exemplo de uso:**
+| Método | Rota | Auth | Descrição |
+|---|---|---|---|
+| `GET` | `/health` | — | Verifica se o serviço está no ar |
+| `POST` | `/ingestao` | X-API-Key | Reindexar documentos de `docs/` no ChromaDB |
+| `POST` | `/perguntar` | X-API-Key | Enviar uma pergunta ao agente |
+
+**Exemplo de uso local (sem AI_API_KEY configurado):**
 
 ```bash
 curl -X POST http://localhost:8000/perguntar \
