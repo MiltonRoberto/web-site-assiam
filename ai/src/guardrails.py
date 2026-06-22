@@ -102,7 +102,7 @@ _TOPIC_KEYWORDS = [
     "frete", "entrega", "disponível", "disponivel", "esgotado",
     "evento", "esporte", "futebol", "vôlei", "volei", "truco", "campeonato",
     "jogo", "competição", "competicao", "time",
-    "diretoria", "instagram", "whatsapp", "contato",
+    "diretoria", "presidente", "vice-presidente", "vice", "instagram", "whatsapp", "contato",
     "coleção", "colecao", "verde", "off-white", "bege",
 ]
 
@@ -110,7 +110,7 @@ _TOPIC_KEYWORDS = [
 _OFF_TOPIC_PATTERNS = [
     r"\b(receita|receitas)\b",
     r"\b(clima|previsão\s+do\s+tempo|temperatura)\b",
-    r"\b(política|eleição|presidente|governo)\b",
+    r"\b(política|eleição|governo)\b",
     r"\b(programação|código|python|javascript|java|html|css)\b",
     r"\b(piada|piadas|humor|engraçado)\b",
     r"\b(tradução|traduza|translate)\b",
@@ -161,20 +161,20 @@ def is_on_topic(pergunta: str) -> bool:
     """Retorna True se a pergunta é sobre a AASIAM."""
     lower = pergunta.lower().strip()
 
-    # Saudações curtas passam sem necessidade de palavra-chave
+    # 1. Palavra-chave da AASIAM presente → libera sempre (maior prioridade)
+    if any(kw in lower for kw in _TOPIC_KEYWORDS):
+        return True
+
+    # 2. Saudações e perguntas curtas sem off-topic explícito → libera
     if len(lower) <= 40 and not any(p.search(lower) for p in _COMPILED_OFF_TOPIC):
         return True
 
-    # Assunto explicitamente off-topic → bloqueia
+    # 3. Assunto explicitamente off-topic → bloqueia
     for pattern in _COMPILED_OFF_TOPIC:
         if pattern.search(lower):
             return False
 
-    # Contém palavra-chave de tópico → libera
-    if any(kw in lower for kw in _TOPIC_KEYWORDS):
-        return True
-
-    # Pergunta longa sem nenhuma palavra-chave → off-topic
+    # 4. Pergunta longa sem nenhuma palavra-chave → off-topic
     return False
 
 
