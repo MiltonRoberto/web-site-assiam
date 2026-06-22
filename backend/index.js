@@ -692,6 +692,43 @@ app.post("/api/webhooks/infinitepay", async (req, res) => {
   }
 });
 
+/* ─── PROXY SEGURO PARA O SERVIÇO DE IA ───────────────────────────────────
+   O browser nunca fala diretamente com a IA.
+   A AI_API_KEY fica só no servidor — nunca exposta ao cliente.           */
+app.post("/api/perguntar", async (req, res) => {
+  const { pergunta } = req.body || {};
+  if (!pergunta || typeof pergunta !== "string") {
+    return res.status(400).json({ error: "Pergunta obrigatória." });
+  }
+
+  const aiUrl = process.env.AI_URL;
+  if (!aiUrl) {
+    return res.status(503).json({ error: "Serviço de IA não configurado." });
+  }
+
+  try {
+    const response = await fetch(`${aiUrl.replace(/\/$/, "")}/perguntar`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(process.env.AI_API_KEY ? { "X-API-Key": process.env.AI_API_KEY } : {}),
+      },
+      body: JSON.stringify({ pergunta }),
+    });
+
+    if (!response.ok) {
+      console.error(`[AI Proxy] Status ${response.status}`);
+      return res.status(502).json({ error: "Serviço de IA indisponível." });
+    }
+
+    const data = await response.json();
+    return res.json(data);
+  } catch (err) {
+    console.error("[AI Proxy] Erro:", err.message);
+    return res.status(502).json({ error: "Serviço de IA indisponível." });
+  }
+});
+
 // Em produção o frontend é servido pela Vercel — o backend é apenas a API.
 // Em dev local o frontend é servido pelo Vite (porta 5173).
 // Não há catch-all aqui para não interferir com rotas /api/*.

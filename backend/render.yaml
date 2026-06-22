@@ -24,3 +24,7 @@ services:
         sync: false   # E-mail da Service Account do Google
       - key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
         sync: false   # Chave privada PEM com \n escapados
+      - key: AI_URL
+        sync: false   # URL do serviço de IA no Render (ex: https://loja-aasiam-ai.onrender.com)
+      - key: AI_API_KEY
+        sync: false   # Mesma chave configurada no serviço de IA
