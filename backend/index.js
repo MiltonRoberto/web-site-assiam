@@ -734,7 +734,7 @@ app.post("/api/perguntar", async (req, res) => {
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000); // 60s para cold start
+    const timeout = setTimeout(() => controller.abort(), 90000); // 90s para cold start Docker
 
     const response = await fetch(`${aiUrl.replace(/\/$/, "")}/perguntar`, {
       method: "POST",

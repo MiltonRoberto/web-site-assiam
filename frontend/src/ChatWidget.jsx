@@ -267,7 +267,7 @@ export default function ChatWidget() {
       const data = await res.json()
       setMsgs(prev => [...prev, { de: 'bot', texto: data.resposta }])
     } catch {
-      setMsgs(prev => [...prev, { de: 'bot', texto: 'Ops, não consegui responder agora. Tente de novo!' }])
+      setMsgs(prev => [...prev, { de: 'bot', texto: 'A assistente está acordando, pode demorar até 1 minuto na primeira mensagem. Tente enviar de novo! 🐺' }])
     } finally {
       setCarregando(false)
     }
