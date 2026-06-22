@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from .ingestao import ingerir
 from .agente import perguntar
+from .guardrails import validate_input, is_on_topic, OFF_TOPIC_REPLY
 
 app = FastAPI(title="AASIAM AI Agent", version="1.0.0")
 
@@ -41,6 +42,13 @@ def rota_ingestao():
 @app.post("/perguntar", response_model=PerguntaResponse)
 def rota_perguntar(body: PerguntaRequest):
     """Recebe uma pergunta e retorna a resposta baseada nos documentos indexados."""
+    valid, err = validate_input(body.pergunta)
+    if not valid:
+        return PerguntaResponse(resposta=err)
+
+    if not is_on_topic(body.pergunta):
+        return PerguntaResponse(resposta=OFF_TOPIC_REPLY)
+
     try:
         resposta = perguntar(body.pergunta)
         return PerguntaResponse(resposta=resposta)
