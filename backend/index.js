@@ -707,6 +707,9 @@ app.post("/api/perguntar", async (req, res) => {
   }
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000); // 60s para cold start
+
     const response = await fetch(`${aiUrl.replace(/\/$/, "")}/perguntar`, {
       method: "POST",
       headers: {
@@ -714,7 +717,9 @@ app.post("/api/perguntar", async (req, res) => {
         ...(process.env.AI_API_KEY ? { "X-API-Key": process.env.AI_API_KEY } : {}),
       },
       body: JSON.stringify({ pergunta }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     if (!response.ok) {
       console.error(`[AI Proxy] Status ${response.status}`);
@@ -725,6 +730,9 @@ app.post("/api/perguntar", async (req, res) => {
     return res.json(data);
   } catch (err) {
     console.error("[AI Proxy] Erro:", err.message);
+    if (err.name === "AbortError") {
+      return res.status(504).json({ error: "A IA demorou para responder. Tente novamente." });
+    }
     return res.status(502).json({ error: "Serviço de IA indisponível." });
   }
 });
